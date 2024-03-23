@@ -3,25 +3,49 @@ import prettytable
 import math
 from ValueWithError import ValueWithError
 import numpy as np
+from enum import Enum
+
+class StanErrorType(Enum):
+    NO_ERROR = 0
+    SYNTAX_ERROR = 1
+    COMPILE_ERROR = 2
+    SAMPLING_ERROR = 3
+
+class StanResultType(Enum):
+    Nothing = 0
+    Sampling = 1
+    ADVI = 2
+    Laplace = 3
+
 
 class IStanResult(ABC):
-    @abstractmethod
     @property
+    @abstractmethod
+    def error_state(self) -> StanErrorType:
+        ...
+
+    @property
+    @abstractmethod
+    def messages(self) -> dict[str,str]:
+        ...
+
+    @property
+    @abstractmethod
     def user_parameters(self) -> list[str]:
         ...
 
-    @abstractmethod
     @property
+    @abstractmethod
     def onedim_parameters(self) -> list[str]:
         ...
 
-    @abstractmethod
     @property
+    @abstractmethod
     def user_parameter_count(self) -> int:
         ...
 
-    @abstractmethod
     @property
+    @abstractmethod
     def onedim_parameter_count(self) -> int:
         ...
 
@@ -44,6 +68,47 @@ class IStanResult(ABC):
         """Returns standard deviation of the parameter. If the parameter is multidimensional,
         the dimensionality of the result is the same as that of .parameter_shape() squared"""
         ...
+
+    @property
+    @abstractmethod
+    def result_type(self) -> StanResultType:
+        ...
+
+    @property
+    @abstractmethod
+    def is_data_set(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
+    def is_model_compiled(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
+    def is_model_loaded(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
+    def initialized(self) -> bool:
+        ...
+    @abstractmethod
+    def clear_last_results(self):
+        """Clears the last results, so that the next results can be stored"""
+        ...
+
+    @abstractmethod
+    def clear_last_data(self):
+        """Clears the last data, so that the next data can be stored"""
+        ...
+
+    @abstractmethod
+    def clear_last_model(self):
+        """Clears the last model, so that the next model can be stored"""
+        ...
+
+
 
     def __repr__(self):
         # Table example:

@@ -1,25 +1,19 @@
-from enum import Enum
+import contextlib
+import io
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import rpy2
+import rpy2.rinterface_lib.callbacks
 from ValueWithError import ValueWithErrorCI, ValueWithErrorVec, ValueWithError
+from overrides import overrides
 from rpy2.robjects.methods import RS4
 from rpy2.robjects.packages import importr
 
-from r_utils import rcode_load_library, normalize_stan_code, convert_dict_to_r
-from .ifaces import IStanResult
-from overrides import overrides
-
-
-class StanResultType(Enum):
-    Nothing = 0
-    Sampling = 1
-    ADVI = 2
-    Laplace = 3
-
+from .ifaces import IStanResult, StanErrorType, StanResultType
+from .r_utils import rcode_load_library, normalize_stan_code, convert_dict_to_r
 
 stan_CI_levels_dict = {0: 0.95, 1: 0.9, 2: 0.8, 3: 0.5}
 
@@ -29,6 +23,7 @@ class RPyRunner(IStanResult):
     _stanc_opts: dict[str, Any]
     _model_cache: Path
     _initialized: bool
+    _rstan: rpy2.robjects.packages.InstalledSTPackage | None
 
     _model_filename: Path | None
     _last_model_hash: str
@@ -66,6 +61,7 @@ class RPyRunner(IStanResult):
 
         self._stanc_opts = {"allow_optimizations": allow_optimizations_for_stanc}
         self._pars_of_interest = rpy2.robjects.NA_Logical
+        self._rstan = None
 
     def install_dependencies(self):
         r_str = """if(!dir.exists(Sys.getenv("R_LIBS_USER"))) {
@@ -78,7 +74,9 @@ class RPyRunner(IStanResult):
 
         pacman = importr('pacman')
         pacman.p_load('rstan', 'purrr')
+        self._rstan = importr("rstan")
 
+    @overrides
     def clear_last_model(self):
         """Also clears results and data"""
         self._last_model_hash = ""
@@ -88,14 +86,29 @@ class RPyRunner(IStanResult):
         self._messages = {}
         self._pars_of_interest = rpy2.robjects.NA_Logical
 
+        if "stanc_output" in self._messages:
+            del self._messages["stanc_output"]
+        if "stanc_warnings" in self._messages:
+            del self._messages["stanc_warnings"]
+        if "stanc_error" in self._messages:
+            del self._messages["stanc_error"]
+        if "compile_output" in self._messages:
+            del self._messages["compile_output"]
+        if "compile_warnings" in self._messages:
+            del self._messages["compile_warnings"]
+        if "compile_error" in self._messages:
+            del self._messages["compile_error"]
+
         self.clear_last_data()
         self.clear_last_results()
 
+    @overrides
     def clear_last_data(self):
         self._data = None
 
         self.clear_last_results()
 
+    @overrides
     def clear_last_results(self):
         self._result = None
         self._result_type = StanResultType.Nothing
@@ -103,32 +116,111 @@ class RPyRunner(IStanResult):
         self._user_parameters = None
         self._stan_extract = None
 
+        if "sampling_output" in self._messages:
+            del self._messages["sampling_output"]
+        if "sampling_warnings" in self._messages:
+            del self._messages["sampling_warnings"]
+        if "sampling_error" in self._messages:
+            del self._messages["sampling_error"]
+
     @property
+    @overrides
     def result_type(self) -> StanResultType:
         return self._result_type
 
-    def load_model_by_str(self, model_code: str | list[str], model_name: str, pars_list: list[str]):
+    @property
+    @overrides
+    def error_state(self) -> StanErrorType:
+        if "stanc_error" in self._messages:
+            return StanErrorType.SYNTAX_ERROR
+        if "compile_error" in self._messages:
+            return StanErrorType.COMPILE_ERROR
+        if "sampling_error" in self._messages:
+            return StanErrorType.SAMPLING_ERROR
+        return StanErrorType.NO_ERROR
+
+    @property
+    @overrides
+    def messages(self) -> dict[str, str]:
+        return self._messages
+
+    @property
+    @overrides
+    def initialized(self) -> bool:
+        return self._initialized
+
+    @property
+    @overrides
+    def is_model_loaded(self) -> bool:
+        return self._model_filename is not None
+
+    @property
+    @overrides
+    def is_model_compiled(self) -> bool:
+        return self._last_model_obj is not None
+
+    def set_data(self, data: dict[str, int | float | np.ndarray]):
+        data = convert_dict_to_r(data)
+        self._data = data
+
+    @property
+    @overrides
+    def is_data_set(self) -> bool:
+        return self._data is not None
+
+    def load_model_by_str(self, model_code: str | list[str], model_name: str, pars_list: list[str] = None):
         if isinstance(model_code, list):
             model_code = "\n".join(model_code)
         assert isinstance(model_code, str)
         assert isinstance(model_name, str)
         model_code = normalize_stan_code(model_code)
-        rstan = importr("rstan")
+        # purrr = importr("purrr")
+        self.clear_last_model()
 
-        # TODO: Check for compilation errors
-        self._last_model_code = rstan.stanc(model_code=model_code, model_name=model_name, verbose=True,
-                                            use_opencl=self._stanc_opts.get("allow_optimizations", False),
-                                            allow_optimizations=self._stanc_opts["allow_optimizations"])
+        stdout = []
+        stderr = []
 
-        # TODO: Capture verbose output
+        def add_to_stdout(line):
+            stdout.append(line)
 
-        model_code = self._last_model_code.slots["model_code"]
-        model_cpp = self._last_model_code.slots["model_cpp"]
-        model_hash = sha256(model_cpp.encode()).hexdigest()
+        def add_to_stderr(line):
+            stderr.append(line)
+
+        stdout_orig = rpy2.rinterface_lib.callbacks.consolewrite_print
+        stderr_orig = rpy2.rinterface_lib.callbacks.consolewrite_warnerror
+
+        rpy2.rinterface_lib.callbacks.consolewrite_print = add_to_stdout
+        rpy2.rinterface_lib.callbacks.consolewrite_warnerror = add_to_stderr
+
+        try:
+            with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                self._last_model_code = self._rstan.stanc(model_code=model_code, model_name=model_name, verbose=True,
+                                                          use_opencl=self._stanc_opts.get("allow_optimizations", False),
+                                                          allow_optimizations=self._stanc_opts["allow_optimizations"])
+
+            # result =  purrr.quietly(rstan.stanc)(model_code=model_code, model_name=model_name, verbose=True,
+            #                                     use_opencl=self._stanc_opts.get("allow_optimizations", False),
+            #                                     allow_optimizations=self._stanc_opts["allow_optimizations"])
+        except rpy2.rinterface_lib.embedded.RRuntimeError as e:
+            self._messages["sampling_output"] = "\n".join(stdout)
+            self._messages["sampling_warnings"] = "\n".join(stderr)
+            self._messages["sampling_error"] = str(e)
+            return
+        finally:
+            rpy2.rinterface_lib.callbacks.consolewrite_print = stdout_orig
+            rpy2.rinterface_lib.callbacks.consolewrite_warnerror = stderr_orig
+
+        output = "\n".join(stdout)
+        warnings = "\n".join(stderr)
+
+        self._messages["stanc_output"] = output
+        self._messages["stanc_warnings"] = warnings
+
+        model_code = list(self._last_model_code.rx2["model_code"])[0]
+        # model_cpp = list(self._last_model_code.rx2["cppcode"])[0]
+        model_hash = sha256(model_code.encode()).hexdigest()
         if model_hash == self._last_model_hash:
             return
-
-        self.clear_last_model()
 
         # Save the model to a file in a cache
         model_filename = find_model_in_cache(self._model_cache, model_name, model_hash)
@@ -142,79 +234,110 @@ class RPyRunner(IStanResult):
             self._pars_of_interest = rpy2.robjects.StrVector(pars_list)
 
         self._model_filename = model_filename
-
-    @property
-    def initialized(self) -> bool:
-        return self._initialized
-
-    @property
-    def is_model_loaded(self) -> bool:
-        return self._model_filename is not None
-
-    @property
-    def is_model_compiled(self) -> bool:
-        return self._last_model_obj is not None
+        self._last_model_hash = model_hash
 
     def compile_model(self):
         if self._last_model_obj is not None:
             return
         assert self.is_model_loaded
 
-        rstan = importr("rstan")
         model_rds_filename = self._model_filename.with_suffix(".rds")
         if model_rds_filename.exists():
             model_obj = rpy2.robjects.r.readRDS(str(model_rds_filename))
-            modej_hash = sha256(model_obj.slots["model_cpp"].encode()).hexdigest()
+            modej_hash = sha256(str(list(model_obj.slots["model_code"])[0]).encode()).hexdigest()
             if modej_hash == self._last_model_hash:
                 self._last_model_obj = model_obj
                 return
+            else:
+                raise RuntimeError(
+                    f"Model hash mismatch for model {self._model_filename}! User should delete that model and inspect the reason for hash collision.")
 
-        # TODO: Check for compilation errors
-        self._last_model_obj = rstan.stan_model(file=str(self._model_filename), stanc_ret=self._last_model_code,
-                                                auto_write=False,
-                                                allow_optimizations=self._stanc_opts["allow_optimizations"],
-                                                verbose=True)
-        # TODO: Capture verbose output
+        stdout = []
+        stderr = []
+
+        def add_to_stdout(line):
+            stdout.append(line)
+
+        def add_to_stderr(line):
+            stderr.append(line)
+
+        stdout_orig = rpy2.rinterface_lib.callbacks.consolewrite_print
+        stderr_orig = rpy2.rinterface_lib.callbacks.consolewrite_warnerror
+
+        rpy2.rinterface_lib.callbacks.consolewrite_print = add_to_stdout
+        rpy2.rinterface_lib.callbacks.consolewrite_warnerror = add_to_stderr
+        try:
+            with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                self._last_model_obj = self._rstan.stan_model(file=str(self._model_filename),
+                                                        stanc_ret=self._last_model_code,
+                                                        auto_write=False,
+                                                        allow_optimizations=self._stanc_opts[
+                                                            "allow_optimizations"],
+                                                        verbose=True)
+        except rpy2.rinterface_lib.embedded.RRuntimeError as e:
+            self._messages["sampling_output"] = "\n".join(stdout)
+            self._messages["sampling_warnings"] = "\n".join(stderr)
+            self._messages["sampling_error"] = str(e)
+            return
+        finally:
+            rpy2.rinterface_lib.callbacks.consolewrite_print = stdout_orig
+            rpy2.rinterface_lib.callbacks.consolewrite_warnerror = stderr_orig
+
+        self._messages["compile_output"] = "\n".join(stdout)
+        self._messages["compile_warnings"] = "\n".join(stderr)
+
         # Save the model to a file in a cache
         rpy2.robjects.r.saveRDS(self._last_model_obj, str(model_rds_filename))
-
-    def set_data(self, data: dict[str, int | float | np.ndarray]):
-        data = convert_dict_to_r(data)
-        self._data = data
-
-    @property
-    def is_data_set(self) -> bool:
-        return self._data is not None
 
     def sampling(self, num_samples: int, num_chains: int, warmup: int = 1000,
                  seed: int = None):
         assert self.is_data_set
         assert self.is_model_loaded
         # Load the model in R
-        rstan = importr("rstan")
-        purrr = importr("purrr")
         if seed is not None:
             rpy2.robjects.r.set_seed(seed)
+        else:
+            seed = np.random.randint(0, 2 ** 31 - 1, dtype=np.int32)
 
-        result = purrr.quietly(rstan.vb)(self._last_model_obj, data=self._data, chains=num_chains, iter=num_samples,
-                                         warmup=warmup, seed=seed, cores=self._number_of_cores,
-                                         verbose=True, pars=self._pars_of_interest)
-        output = "\n".join(list(result.rx2("output")))
-        warnings = "\n".join(list(result.rx2("warnings")))
-        fit = result.rx2("result")
-        self._messages["sampling_output"] = output
-        self._messages["sampling_warnings"] = warnings
+        stdout = []
+        stderr = []
+
+        def add_to_stdout(line):
+            stdout.append(line)
+
+        def add_to_stderr(line):
+            stderr.append(line)
+
+        stdout_orig = rpy2.rinterface_lib.callbacks.consolewrite_print
+        stderr_orig = rpy2.rinterface_lib.callbacks.consolewrite_warnerror
+
+        rpy2.rinterface_lib.callbacks.consolewrite_print = add_to_stdout
+        rpy2.rinterface_lib.callbacks.consolewrite_warnerror = add_to_stderr
+
+        try:
+            with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                fit = self._rstan.sampling(self._last_model_obj, data=self._data, chains=num_chains,
+                                     iter=int(num_samples + warmup),
+                                     warmup=int(warmup), seed=seed, cores=int(self._number_of_cores),
+                                     verbose=True, pars=self._pars_of_interest)
+        except rpy2.rinterface_lib.embedded.RRuntimeError as e:
+            self._messages["sampling_output"] = "\n".join(stdout)
+            self._messages["sampling_warnings"] = "\n".join(stderr)
+            self._messages["sampling_error"] = str(e)
+            return
+        finally:
+            rpy2.rinterface_lib.callbacks.consolewrite_print = stdout_orig
+            rpy2.rinterface_lib.callbacks.consolewrite_warnerror = stderr_orig
+        self._messages["sampling_output"] = "\n".join(stdout)
+        self._messages["sampling_warnings"] = "\n".join(stderr)
 
         self._result = fit
         self._result_type = StanResultType.Sampling
 
-        stan = importr("rstan")
-
-        summary = stan.summary_sim(result.slots['sim'])
+        summary = self._rstan.summary_sim(fit.slots['sim'])
         self._onedim_parameters = list(rpy2.robjects.reval("(function(x){rownames(x$msd)})")(summary))
         user_pars = [p for p in fit.slots["model_pars"] if p != "lp__"]
         self._user_parameters = user_pars
-
 
     def variational_bayes(self, seed: int = None,
                           algorithm: str = "meanfield",
@@ -224,6 +347,7 @@ class RPyRunner(IStanResult):
                           adapt_iter: int = 50):
         assert self.is_data_set
         assert self.is_model_loaded
+        assert False
         # Load the model in R
         rstan = importr("rstan")
         purrr = importr("purrr")
@@ -240,8 +364,8 @@ class RPyRunner(IStanResult):
         output = "\n".join(list(result.rx2("output")))
         warnings = "\n".join(list(result.rx2("warnings")))
         fit = result.rx2("result")
-        self._messages["vb_output"] = output
-        self._messages["vb_warnings"] = warnings
+        self._messages["sampling_output"] = output
+        self._messages["sampling_warnings"] = warnings
 
         self._result = fit
         self._result_type = StanResultType.ADVI
@@ -252,7 +376,6 @@ class RPyRunner(IStanResult):
         self._onedim_parameters = list(rpy2.robjects.reval("(function(x){rownames(x$msd)})")(summary))
         user_pars = [p for p in fit.slots["model_pars"] if p != "lp__"]
         self._user_parameters = user_pars
-
 
     def MAP_estimate(self, seed: int = None, algorithm: str = "LBFGS",
                      importance_resampling: bool = False, iter: int = 2000, init_alpha: float = 0.001,
@@ -339,23 +462,23 @@ class RPyRunner(IStanResult):
         # par_names = set(rpy2.robjects.r.colnames(self._MAP.rx2["hessian"]))
         # pars = [p for p in self._MAP.rx2["par"] if p in par_names]
 
-    @overrides
     @property
+    @overrides
     def user_parameters(self) -> list[str]:
         return self._user_parameters
 
-    @overrides
     @property
+    @overrides
     def onedim_parameters(self) -> list[str]:
         return self._onedim_parameters
 
-    @overrides
     @property
+    @overrides
     def user_parameter_count(self) -> int:
         return len(self._user_parameters)
 
-    @overrides
     @property
+    @overrides
     def onedim_parameter_count(self) -> int:
         return len(self._onedim_parameters)
 
@@ -370,7 +493,7 @@ class RPyRunner(IStanResult):
         return self._stan_extract
 
     @overrides
-    def get_parameter_estimate(self, onedim_par_name: str, store_values:bool = False) -> ValueWithError:
+    def get_parameter_estimate(self, onedim_par_name: str, store_values: bool = False) -> ValueWithError:
         if self._result_type == StanResultType.Sampling or self._result_type == StanResultType.ADVI:
             if store_values:
                 stan_extract = self._get_stan_extract()
@@ -388,7 +511,7 @@ class RPyRunner(IStanResult):
         elif self._result_type == StanResultType.Laplace:
             if store_values:
                 raise ValueError("Laplace approximation does not provide samples.")
-            else: #TODO
+            else:  # TODO
                 raise NotImplementedError("Laplace approximation not implemented yet.")
         else:
             raise ValueError("No results available.")
@@ -423,7 +546,10 @@ class RPyRunner(IStanResult):
 def find_model_in_cache(model_cache: Path, model_name: str, model_hash: str) -> Path:
     best_model_filename = None
     for hash_char_count in range(0, len(model_hash)):
-        model_filename = model_cache / f"{model_name} {model_hash[:hash_char_count]}.stan"
+        if hash_char_count == 0:
+            model_filename = model_cache / f"{model_name}.stan"
+        else:
+            model_filename = model_cache / f"{model_name} {model_hash[:hash_char_count]}.stan"
         if model_filename.exists():
             # load the model and check its hash if it matches
             with model_filename.open("r") as f:
@@ -434,7 +560,8 @@ def find_model_in_cache(model_cache: Path, model_name: str, model_hash: str) -> 
                         f"Hash collision for model {model_name} with hash {model_hash} in cache file {model_filename}!")
                 return model_filename
         else:
-            best_model_filename = model_filename
+            if best_model_filename is None:
+                best_model_filename = model_filename
 
         hash_char_count += 1
 

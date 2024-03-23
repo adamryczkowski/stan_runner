@@ -44,5 +44,8 @@ def convert_dict_to_r(d: dict[str, np.ndarray | float | int]) -> Any:
 
     numpy2ri.activate()
     for key, item in d.items():
+        if isinstance(type, np.ndarray):
+            if item.shape == ():
+                item = item.tolist()
         d_r.rx2[key] = item
     return d_r

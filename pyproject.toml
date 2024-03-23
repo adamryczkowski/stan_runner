@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "stan_runner"
+version = "0.1.0"
+description = "Stan model computing runner"  # Optional
+
+readme = "README.md" # Optional
+
+authors = ["Adam Ryczkowski <adam@statystyka.net>"]
+packages = [{ include = "stan_runner", from = '' }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+numpy = "^1.26.4"
+overrides = "^7.7.0"
+click = "^8.1.7"
+rpy2 = "^3.5.15"
+hatchet = {version = "^1.4.0", optional = true}
+invoke = "^2.2.0"
+requests = "^2.31.0"
+fabric = {version  = "^3.2.2", optional = false}
+valuewitherror = {path = "../ValueWithError"}
+prettytable = "^3.10.0"
+
+[tool.poetry.extras]
+hatchet = ["hatchet"]
+
+
+#[project.scripts]  # Optional
+#stan_runner = "stan_runner:cli"
+
+## This is configuration specific to the `setuptools` build backend.
+## If you are using a different build backend, you will need to change this.
+[tool.setuptools]
+## If there are data files included in your packages that need to be
+## installed, specify them here.
+#package-data = {"sample" = ["*.dat"]}
+py-modules = ["stan_runner"]
+
+[build-system]
+# These are the assumed default build requirements from pip:
+# https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
+requires = ["setuptools>=43.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+#[build-system]
+#requires = ["poetry-core"]
+#build-backend = "poetry.core.masonry.api"
