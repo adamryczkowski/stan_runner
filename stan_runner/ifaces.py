@@ -91,6 +91,11 @@ class IStanResult(ABC):
 
     @property
     @abstractmethod
+    def is_model_sampled(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
     def initialized(self) -> bool:
         ...
     @abstractmethod
@@ -130,14 +135,15 @@ class IStanResult(ABC):
                 max_idx = math.prod(dims)
                 idx = [0 for _ in dims]
                 i = 0
+                par_txt = par
                 while i < max_idx:
-                    idx_txt = "[" + "][".join([str(i + 1) for i in idx]) + "]"
+                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
                     par_name = f"{par}{idx_txt}"
                     par_value = self.get_parameter_estimate(par_name)
                     ci = par_value.get_CI(0.8)
-                    table.add_row([par, idx_txt, str(par_value.estimateMean), str(par_value.estimateSE),
+                    table.add_row([par_txt, idx_txt, str(par_value.estimateMean()), str(par_value.estimateSE()),
                                    str(ci.pretty_lower), str(ci.pretty_upper)])
-                    par = ""
+                    par_txt = ""
                     i += 1
                     idx[-1] += 1
                     for j in range(len(dims) - 1, 0, -1):

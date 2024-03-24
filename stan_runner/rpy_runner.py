@@ -159,6 +159,11 @@ class RPyRunner(IStanResult):
     def is_model_compiled(self) -> bool:
         return self._last_model_obj is not None
 
+    @property
+    @overrides
+    def is_model_sampled(self) -> bool:
+        return self._result is not None and self._result_type != StanResultType.Nothing
+
     def set_data(self, data: dict[str, int | float | np.ndarray]):
         data = convert_dict_to_r(data)
         self._data = data
@@ -202,9 +207,10 @@ class RPyRunner(IStanResult):
             #                                     use_opencl=self._stanc_opts.get("allow_optimizations", False),
             #                                     allow_optimizations=self._stanc_opts["allow_optimizations"])
         except rpy2.rinterface_lib.embedded.RRuntimeError as e:
-            self._messages["sampling_output"] = "\n".join(stdout)
-            self._messages["sampling_warnings"] = "\n".join(stderr)
-            self._messages["sampling_error"] = str(e)
+            self._messages["stanc_output"] = "\n".join(stdout)
+            self._messages["stanc_warnings"] = "\n".join(stderr)
+            self._messages["stanc_error"] = str(e)
+            self._last_model_code = model_code
             return
         finally:
             rpy2.rinterface_lib.callbacks.consolewrite_print = stdout_orig
@@ -269,15 +275,15 @@ class RPyRunner(IStanResult):
         try:
             with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
                 self._last_model_obj = self._rstan.stan_model(file=str(self._model_filename),
-                                                        stanc_ret=self._last_model_code,
+                                                        # stanc_ret=self._last_model_code,
                                                         auto_write=False,
                                                         allow_optimizations=self._stanc_opts[
                                                             "allow_optimizations"],
                                                         verbose=True)
         except rpy2.rinterface_lib.embedded.RRuntimeError as e:
-            self._messages["sampling_output"] = "\n".join(stdout)
-            self._messages["sampling_warnings"] = "\n".join(stderr)
-            self._messages["sampling_error"] = str(e)
+            self._messages["compile_output"] = "\n".join(stdout)
+            self._messages["compile_warnings"] = "\n".join(stderr)
+            self._messages["compile_error"] = str(e)
             return
         finally:
             rpy2.rinterface_lib.callbacks.consolewrite_print = stdout_orig
@@ -463,6 +469,15 @@ class RPyRunner(IStanResult):
         # pars = [p for p in self._MAP.rx2["par"] if p in par_names]
 
     @property
+    def model_code(self) -> str|None:
+        if self._last_model_code is not None:
+            if isinstance(self._last_model_code, str):
+                return self._last_model_code
+            else:
+                return list(self._last_model_code.rx2["model_code"])[0]
+        return None
+
+    @property
     @overrides
     def user_parameters(self) -> list[str]:
         return self._user_parameters
@@ -484,13 +499,23 @@ class RPyRunner(IStanResult):
 
     @overrides
     def get_parameter_shape(self, user_par_name: str) -> list[int]:
-        raise "Not implemented yet"
+        dims = self._result.slots["par_dims"].rx2(str(user_par_name))
+        return dims.astype(int).tolist()
 
     def _get_stan_extract(self):
         if self._stan_extract and self._result == StanResultType.Sampling or self._result == StanResultType.ADVI:
             stan = importr("rstan")
             self._stan_extract = stan.extract(self._result)
         return self._stan_extract
+
+    @property
+    def sample_count(self)->int:
+        assert self.is_model_sampled
+        if self._result_type == StanResultType.Sampling or self._result_type == StanResultType.ADVI:
+            sim = self._result.slots['sim']
+            n_save = sim.rx2('n_save')
+            return int(np.sum(n_save))
+        raise NotImplementedError("Sample count not implemented yet.")
 
     @overrides
     def get_parameter_estimate(self, onedim_par_name: str, store_values: bool = False) -> ValueWithError:
@@ -507,7 +532,7 @@ class RPyRunner(IStanResult):
                 msd = summary.rx2['msd']
                 quan = summary.rx2['quan']
                 return ValueWithErrorCI(value=msd[i, 0], SE=msd[i, 1], ci_level=0.80, ci_lower=quan[i, 2],
-                                        ci_upper=quan[i, -2])
+                                        ci_upper=quan[i, -2], N=self.sample_count)
         elif self._result_type == StanResultType.Laplace:
             if store_values:
                 raise ValueError("Laplace approximation does not provide samples.")
