@@ -200,7 +200,7 @@ class RPyRunner(IStanResult):
         try:
             with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
                 self._last_model_code = self._rstan.stanc(model_code=model_code, model_name=model_name, verbose=True,
-                                                          use_opencl=self._stanc_opts.get("allow_optimizations", False),
+                                                          use_opencl=self._stanc_opts.get("use_opencl", False),
                                                           allow_optimizations=self._stanc_opts["allow_optimizations"])
 
             # result =  purrr.quietly(rstan.stanc)(model_code=model_code, model_name=model_name, verbose=True,
@@ -275,7 +275,7 @@ class RPyRunner(IStanResult):
         try:
             with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
                 self._last_model_obj = self._rstan.stan_model(file=str(self._model_filename),
-                                                        # stanc_ret=self._last_model_code,
+                                                        stanc_ret=self._last_model_code,
                                                         auto_write=False,
                                                         allow_optimizations=self._stanc_opts[
                                                             "allow_optimizations"],
