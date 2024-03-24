@@ -6,27 +6,32 @@ import numpy as np
 
 
 def model_generator_array(total_dim: list[int],
-                          matrix_size: int = 0,
+                          matrix_dim_count: int = 0,
                           incl_transformed_params: bool = False) -> tuple[str, dict[str, np.ndarray]]:
     # Returns stan model that gets input data of dimension data_dim, and returns something
     # of the same dimension.
 
-    assert len(total_dim) >= matrix_size
-    assert matrix_size <= 2
-    array_size = len(total_dim) - matrix_size
-    matrix_dim = total_dim[-matrix_size:]
-    array_dim = total_dim[:-matrix_size]
+    assert len(total_dim) >= matrix_dim_count
+    assert matrix_dim_count <= 2
+    total_dim_count = len(total_dim)
+    array_dim_count = total_dim_count - matrix_dim_count
+    if matrix_dim_count > 0:
+        matrix_dim = total_dim[-matrix_dim_count:]
+        array_dim = total_dim[:-matrix_dim_count]
+    else:
+        matrix_dim = []
+        array_dim = total_dim
 
-    if array_size > 0:
-        array_str = "array [" + "][".join([str(i) for i in array_dim]) + "] "
+    if array_dim_count > 0:
+        array_str = "array [" + ",".join([str(i) for i in array_dim]) + "] "
     else:
         array_str = ""
 
-    if matrix_size == 0 or (matrix_size == 1 and matrix_dim[0] == 1):
+    if matrix_dim_count == 0 or (matrix_dim_count == 1 and matrix_dim[0] == 1):
         matrix_type = "real"
-    elif matrix_size == 1:
+    elif matrix_dim_count == 1:
         matrix_type = f"vector[{matrix_dim[0]}]"
-    elif matrix_size == 2:
+    elif matrix_dim_count == 2:
         matrix_type = f"matrix[{matrix_dim[0]}, {matrix_dim[1]}]"
     else:
         raise Exception("matrix_size should be 0, 1, or 2.")
@@ -45,7 +50,7 @@ def model_generator_array(total_dim: list[int],
     indent = ""
     arr_index = ""
     braces_off =""
-    for a in range(array_size):
+    for a in range(array_dim_count):
         # Sets the identifier for the array dimension as i, j, k, l, and so on for each array_size
         identifier = chr(ord('i') + a)
         indent = "   " * a
@@ -53,7 +58,7 @@ def model_generator_array(total_dim: list[int],
         arr_index += f"[{identifier}]"
         braces_off += "}"
 
-    if matrix_size == 2:
+    if matrix_dim_count == 2:
         indent += "   "
         braces_off += "}"
         model_code.append(f"   {indent}for (row in 1:{matrix_dim[0]}) {{")
@@ -65,7 +70,19 @@ def model_generator_array(total_dim: list[int],
     model_code.append("")
     model_code.append("generated quantities {")
     model_code.append(f"   {array_str}{matrix_type} par2;")
-    model_code.append("   par2 = par + 1;")
+    if array_dim_count > 0:
+        arr_index = ""
+        braces_off = ""
+        for a in range(array_dim_count):
+            identifier = chr(ord('i') + a)
+            indent = "   " * a
+            model_code.append(f"   {indent}for ({identifier} in 1:{array_dim[a]}) {{")
+            arr_index += f"[{identifier}]"
+            braces_off += "}"
+        model_code.append(f"   {indent}par2{arr_index} = par{arr_index} + 1;")
+        model_code.append(f"   {braces_off}")
+    else:
+        model_code.append("   par2 = par + 1;")
     model_code.append("}")
     model_code.append("")
     model_str = "\n".join(model_code)
@@ -118,6 +135,23 @@ def test2():
 def test3():
     test_model(*model_generator_array([2,3], 2, True))
 
+def test4():
+    test_model(*model_generator_array([2,3, 4], 2, True))
+
+def test4():
+    test_model(*model_generator_array([2,3, 4, 2], 2, True))
+
+def test5():
+    test_model(*model_generator_array([2,3, 4], 1, True))
+
+def test6():
+    test_model(*model_generator_array([2,3, 4], 0, True))
+
 
 if __name__ == '__main__':
+    test1()
+    test2()
     test3()
+    test4()
+    test5()
+    test6()
