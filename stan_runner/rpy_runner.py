@@ -42,13 +42,14 @@ class RPyRunner(IStanResult):
 
     _messages: dict[str, str]
 
-    def __init__(self, model_cache: Path, number_of_cores: int = 1, allow_optimizations_for_stanc: bool = True):
+    def __init__(self, model_cache: Path, number_of_cores: int = None, allow_optimizations_for_stanc: bool = True):
         assert isinstance(model_cache, Path)
         if not model_cache.exists():
             model_cache.mkdir(parents=True)
         assert model_cache.is_dir()
         assert isinstance(number_of_cores, int)
-        assert number_of_cores > 0
+        if number_of_cores is not None:
+            assert number_of_cores > 0
 
         self._number_of_cores = number_of_cores
         self._model_cache = model_cache
@@ -75,6 +76,10 @@ class RPyRunner(IStanResult):
         pacman = importr('pacman')
         pacman.p_load('rstan', 'purrr')
         self._rstan = importr("rstan")
+        # options(mc.cores = parallel::detectCores())
+        if self._number_of_cores is None:
+            self._number_of_cores = rpy2.rinterface_lib.callbacks.detectCores()
+        rpy2.robjects.r.options(mc_cores=self._number_of_cores)
 
     @overrides
     def clear_last_model(self):
@@ -146,13 +151,18 @@ class RPyRunner(IStanResult):
 
     @property
     @overrides
-    def initialized(self) -> bool:
+    def is_initialized(self) -> bool:
         return self._initialized
 
     @property
     @overrides
     def is_model_loaded(self) -> bool:
         return self._model_filename is not None
+
+    @property
+    @overrides
+    def is_error(self) -> bool:
+        return "stanc_error" in self._messages or "compile_error" in self._messages or "sampling_error" in self._messages
 
     @property
     @overrides
@@ -164,6 +174,21 @@ class RPyRunner(IStanResult):
     def is_model_sampled(self) -> bool:
         return self._result is not None and self._result_type != StanResultType.Nothing
 
+    @overrides
+    def get_messages(self, error_only: bool)->str:
+        output = []
+        items = ["stanc_output", "stanc_warnings", "stanc_error",
+                 "compile_output", "compile_warnings", "compile_error",
+                 "sampling_output", "sampling_warnings", "sampling_error"]
+
+        for item in items:
+            if item in self._messages:
+                if error_only and not item.endswith("error"):
+                    continue
+                output.append(self._messages[item])
+        return "\n".join(output)
+
+
     def set_data(self, data: dict[str, int | float | np.ndarray]):
         data = convert_dict_to_r(data)
         self._data = data
@@ -174,6 +199,8 @@ class RPyRunner(IStanResult):
         return self._data is not None
 
     def load_model_by_str(self, model_code: str | list[str], model_name: str, pars_list: list[str] = None):
+        if not self.is_initialized:
+            self.install_dependencies()
         if isinstance(model_code, list):
             model_code = "\n".join(model_code)
         assert isinstance(model_code, str)
@@ -275,11 +302,11 @@ class RPyRunner(IStanResult):
         try:
             with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
                 self._last_model_obj = self._rstan.stan_model(file=str(self._model_filename),
-                                                        stanc_ret=self._last_model_code,
-                                                        auto_write=False,
-                                                        allow_optimizations=self._stanc_opts[
-                                                            "allow_optimizations"],
-                                                        verbose=True)
+                                                              stanc_ret=self._last_model_code,
+                                                              auto_write=False,
+                                                              allow_optimizations=self._stanc_opts[
+                                                                  "allow_optimizations"],
+                                                              verbose=True)
         except rpy2.rinterface_lib.embedded.RRuntimeError as e:
             self._messages["compile_output"] = "\n".join(stdout)
             self._messages["compile_warnings"] = "\n".join(stderr)
@@ -323,9 +350,9 @@ class RPyRunner(IStanResult):
         try:
             with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
                 fit = self._rstan.sampling(self._last_model_obj, data=self._data, chains=num_chains,
-                                     iter=int(num_samples + warmup),
-                                     warmup=int(warmup), seed=seed, cores=int(self._number_of_cores),
-                                     verbose=True, pars=self._pars_of_interest)
+                                           iter=int(num_samples + warmup),
+                                           warmup=int(warmup), seed=seed, cores=int(self._number_of_cores),
+                                           verbose=True, pars=self._pars_of_interest)
         except rpy2.rinterface_lib.embedded.RRuntimeError as e:
             self._messages["sampling_output"] = "\n".join(stdout)
             self._messages["sampling_warnings"] = "\n".join(stderr)
@@ -469,7 +496,7 @@ class RPyRunner(IStanResult):
         # pars = [p for p in self._MAP.rx2["par"] if p in par_names]
 
     @property
-    def model_code(self) -> str|None:
+    def model_code(self) -> str | None:
         if self._last_model_code is not None:
             if isinstance(self._last_model_code, str):
                 return self._last_model_code
@@ -509,7 +536,7 @@ class RPyRunner(IStanResult):
         return self._stan_extract
 
     @property
-    def sample_count(self)->int:
+    def sample_count(self) -> int:
         assert self.is_model_sampled
         if self._result_type == StanResultType.Sampling or self._result_type == StanResultType.ADVI:
             sim = self._result.slots['sim']

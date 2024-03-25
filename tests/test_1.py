@@ -1,8 +1,8 @@
+from pathlib import Path
+
 import numpy as np
 
 from stan_runner import *
-from pathlib import Path
-import numpy as np
 
 
 def model_generator_array(total_dim: list[int],
@@ -49,7 +49,7 @@ def model_generator_array(total_dim: list[int],
          ]
     indent = ""
     arr_index = ""
-    braces_off =""
+    braces_off = ""
     for a in range(array_dim_count):
         # Sets the identifier for the array dimension as i, j, k, l, and so on for each array_size
         identifier = chr(ord('i') + a)
@@ -97,7 +97,8 @@ def model_generator_array(total_dim: list[int],
 
     return model_str, data_dict
 
-def test_model(model_code:str, data:dict[str,str]):
+
+def test_model(model_code: str, data: dict[str, str]):
     # model_cache_dir should be an absolute string of the model_cache directory in the project's folder.
     model_cache_dir = Path(__file__).parent / "model_cache"
 
@@ -132,20 +133,25 @@ def test1():
 def test2():
     test_model(*model_generator_array([2], 1, True))
 
+
 def test3():
-    test_model(*model_generator_array([2,3], 2, True))
+    test_model(*model_generator_array([2, 3], 2, True))
+
 
 def test4():
-    test_model(*model_generator_array([2,3, 4], 2, True))
+    test_model(*model_generator_array([2, 3, 4], 2, True))
+
 
 def test4():
-    test_model(*model_generator_array([2,3, 4, 2], 2, True))
+    test_model(*model_generator_array([2, 3, 4, 2], 2, True))
+
 
 def test5():
-    test_model(*model_generator_array([2,3, 4], 1, True))
+    test_model(*model_generator_array([2, 3, 4], 1, True))
+
 
 def test6():
-    test_model(*model_generator_array([2,3, 4], 0, True))
+    test_model(*model_generator_array([2, 3, 4], 0, True))
 
 
 if __name__ == '__main__':

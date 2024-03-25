@@ -96,8 +96,14 @@ class IStanResult(ABC):
 
     @property
     @abstractmethod
-    def initialized(self) -> bool:
+    def is_initialized(self) -> bool:
         ...
+
+    @property
+    @abstractmethod
+    def is_error(self)->bool:
+        ...
+
     @abstractmethod
     def clear_last_results(self):
         """Clears the last results, so that the next results can be stored"""
@@ -114,6 +120,9 @@ class IStanResult(ABC):
         ...
 
 
+    @abstractmethod
+    def get_messages(self, error_only:bool)->str:
+        pass
 
     def __repr__(self):
         # Table example:
