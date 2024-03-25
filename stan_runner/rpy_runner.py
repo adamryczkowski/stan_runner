@@ -47,8 +47,8 @@ class RPyRunner(IStanResult):
         if not model_cache.exists():
             model_cache.mkdir(parents=True)
         assert model_cache.is_dir()
-        assert isinstance(number_of_cores, int)
         if number_of_cores is not None:
+            assert isinstance(number_of_cores, int)
             assert number_of_cores > 0
 
         self._number_of_cores = number_of_cores
@@ -78,7 +78,9 @@ class RPyRunner(IStanResult):
         self._rstan = importr("rstan")
         # options(mc.cores = parallel::detectCores())
         if self._number_of_cores is None:
-            self._number_of_cores = rpy2.rinterface_lib.callbacks.detectCores()
+            parallel = importr("parallel")
+            self._number_of_cores = parallel.detectCores()[0]
+
         rpy2.robjects.r.options(mc_cores=self._number_of_cores)
 
     @overrides
