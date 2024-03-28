@@ -77,24 +77,33 @@ def test1():
     runner.load_data_by_dict(data_dict)
     assert runner.is_data_set
     # runner.sampling(16000, num_chains=16)
-    vb, messages = runner.variational_bayes(grad_samples=20)
-    if vb is None:
-        print(messages["stderr"])
-
     print(data_dict["true_mu"])
     print(data_dict["true_sigma"])
-    print(vb)
 
-    map, messages = runner.laplace_sample()
+
+    map = runner.laplace_sample()
     if map is None:
-        print(messages["stderr"])
+        print(map.messages["stderr"])
     print(map)
+    print(map.get_cov_matrix())
 
-    mcmc, messages = runner.sampling(num_samples=4000, num_chains=8)
+    pf = runner.pathfinder(output_samples=4000)
+    if pf is None:
+        print(pf.messages["stderr"])
+    print(pf)
+    print(pf.get_cov_matrix())
+
+    vb = runner.variational_bayes(grad_samples=20)
+    if vb is None:
+        print(vb.messages["stderr"])
+    print(vb)
+    print(vb.get_cov_matrix())
+
+    mcmc = runner.sampling(iter_sampling=4000, num_chains=8)
     if mcmc is None:
-        print(messages["stderr"])
-    print(mcmc.summary())
-
+        print(mcmc.messages["stderr"])
+    print(mcmc)
+    print(mcmc.get_cov_matrix())
 
 if __name__ == '__main__':
     test1()

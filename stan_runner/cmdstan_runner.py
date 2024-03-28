@@ -6,12 +6,14 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from subprocess import run
 from typing import Any, Optional
+from multiprocessing import cpu_count
 
 import cmdstanpy
 import numpy as np
 from overrides import overrides
 
 from .ifaces import IStanResult, StanErrorType
+from .result_adapter import InferenceResult
 from .utils import find_model_in_cache
 
 stan_CI_levels_dict = {0: 0.95, 1: 0.9, 2: 0.8, 3: 0.5}
@@ -81,7 +83,7 @@ class CmdStanRunner(IStanResult):
 
         if allow_optimizations_for_stanc:
             self._stanc_opts = {"O": True}
-        self._cpp_opts = {"stan_threads": stan_threads}
+        self._cpp_opts = {"STAN_THREADS": stan_threads}
         self._pars_of_interest = None
 
         self._stan_model = None
@@ -96,7 +98,7 @@ class CmdStanRunner(IStanResult):
         if self._initialized:
             return
 
-        initialize(self._number_of_cores)
+        initialize(self.number_of_cores)
         self._initialized = True
 
     @overrides
@@ -119,6 +121,10 @@ class CmdStanRunner(IStanResult):
             del self._messages["compile_error"]
 
         self.clear_last_data()
+
+    @property
+    def number_of_cores(self) -> int:
+        return cpu_count() if self._number_of_cores is None else self._number_of_cores
 
     def clear_last_data(self):
         self._data = None
@@ -287,23 +293,22 @@ class CmdStanRunner(IStanResult):
 
     def sampling(self, num_chains: int, iter_sampling: int = None,
                  iter_warmup: int = None, thin: int = 1, max_treedepth: int = None,
-                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> tuple[
-        Optional[cmdstanpy.CmdStanMCMC], dict[str, str]]:
+                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> InferenceResult:
 
         assert self.is_model_compiled
 
         threads_per_chain = 1
-        if "STAN_THREADS" in self._cpp_opts:
-            if self._cpp_opts["STAN_THREADS"] == "true":
-                if self._number_of_cores > num_chains:
-                    threads_per_chain = self._number_of_cores // num_chains
+        parallel_chains = min(num_chains, self.number_of_cores)
+        if "STAN_THREADS" in self._cpp_opts and self._cpp_opts["STAN_THREADS"] == True:
+            if self.number_of_cores > num_chains:
+                threads_per_chain = self.number_of_cores // num_chains
 
         stdout = io.StringIO()
         stderr = io.StringIO()
 
         with redirect_stdout(stdout), redirect_stderr(stderr):
             try:
-                ans = self._stan_model.sample(data=self._data, chains=num_chains, parallel_chains=1,
+                ans = self._stan_model.sample(data=self._data, chains=num_chains, parallel_chains=parallel_chains,
                                               threads_per_chain=threads_per_chain, seed=seed,
                                               inits=inits, iter_warmup=iter_warmup,
                                               iter_sampling=iter_sampling, thin=thin,
@@ -311,12 +316,13 @@ class CmdStanRunner(IStanResult):
                                               sig_figs=self._other_opts.get("sig_figs", None))
             except subprocess.CalledProcessError as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-                return None, messages
+                return InferenceResult(None, messages)
 
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        return ans, messages
+        out = InferenceResult(ans, messages)
+        return out
 
-    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> tuple[Optional[cmdstanpy.CmdStanVB], dict[str, str]]:
+    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
 
         assert self.is_model_compiled
 
@@ -331,11 +337,13 @@ class CmdStanRunner(IStanResult):
                                                    **kwargs)
             except subprocess.CalledProcessError as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-                return None, messages
-        return ans, {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
+                return InferenceResult(None, messages)
+        messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
+        out = InferenceResult(ans, messages)
 
-    def pathfinder(self,
-                   output_samples: int = 1000, **kwargs) -> tuple[Optional[cmdstanpy.CmdStanPathfinder], dict[str, str]]:
+        return out
+
+    def pathfinder(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
         assert self.is_model_compiled
 
         stdout = io.StringIO()
@@ -343,16 +351,19 @@ class CmdStanRunner(IStanResult):
 
         with redirect_stdout(stdout), redirect_stderr(stderr):
             try:
-                ans = self._stan_model.pathfinder(data=self._data, draws=output_samples, output_dir=self._output_dir.name,
+                ans = self._stan_model.pathfinder(data=self._data, draws=output_samples,
+                                                  output_dir=self._output_dir.name,
                                                   sig_figs=self._other_opts.get("sig_figs", None),
                                                   **kwargs)
             except subprocess.CalledProcessError as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-                return None, messages
+                return InferenceResult(None, messages)
 
-        return ans, {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
+        messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
+        out = InferenceResult(ans, messages)
+        return out
 
-    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> tuple[Optional[cmdstanpy.CmdStanLaplace], dict[str, str]]:
+    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
         assert self.is_model_compiled
 
         stdout = io.StringIO()
@@ -366,8 +377,10 @@ class CmdStanRunner(IStanResult):
                                                       **kwargs)
             except subprocess.CalledProcessError as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-                return None, messages
-        return ans, {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
+                return InferenceResult(None, messages)
+        messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
+        out = InferenceResult(ans, messages)
+        return out
 
     def optimize(self, **kwargs) -> tuple[Optional[cmdstanpy.CmdStanMLE], dict[str, str]]:
         assert self.is_model_compiled
