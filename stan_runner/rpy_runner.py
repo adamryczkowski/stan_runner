@@ -11,6 +11,7 @@ from ValueWithError import ValueWithErrorCI, ValueWithErrorVec, ValueWithError
 from overrides import overrides
 from rpy2.robjects.methods import RS4
 from rpy2.robjects.packages import importr
+from .utils import find_model_in_cache
 
 from .ifaces import IStanResult, StanErrorType, StanResultType
 from .r_utils import rcode_load_library, normalize_stan_code, convert_dict_to_r
@@ -54,7 +55,7 @@ class RPyRunner(IStanResult):
         self._number_of_cores = number_of_cores
         self._model_cache = model_cache
 
-        self.clear_last_model()
+        self.clear()
         self.clear_last_data()
         self.clear_last_results()
 
@@ -84,7 +85,7 @@ class RPyRunner(IStanResult):
         rpy2.robjects.r.options(mc_cores=self._number_of_cores)
 
     @overrides
-    def clear_last_model(self):
+    def clear(self):
         """Also clears results and data"""
         self._last_model_hash = ""
         self._last_model_code = None
@@ -177,7 +178,7 @@ class RPyRunner(IStanResult):
         return self._result is not None and self._result_type != StanResultType.Nothing
 
     @overrides
-    def get_messages(self, error_only: bool)->str:
+    def get_messages(self, error_only: bool) -> str:
         output = []
         items = ["stanc_output", "stanc_warnings", "stanc_error",
                  "compile_output", "compile_warnings", "compile_error",
@@ -189,7 +190,6 @@ class RPyRunner(IStanResult):
                     continue
                 output.append(self._messages[item])
         return "\n".join(output)
-
 
     def set_data(self, data: dict[str, int | float | np.ndarray]):
         data = convert_dict_to_r(data)
@@ -209,7 +209,7 @@ class RPyRunner(IStanResult):
         assert isinstance(model_name, str)
         model_code = normalize_stan_code(model_code)
         # purrr = importr("purrr")
-        self.clear_last_model()
+        self.clear()
 
         stdout = []
         stderr = []
@@ -326,12 +326,14 @@ class RPyRunner(IStanResult):
 
     def sampling(self, num_samples: int, num_chains: int, warmup: int = 1000,
                  seed: int = None):
+        self._sampling(False, seed=seed, chains=num_chains, iter=int(num_samples / num_chains + warmup),
+                       warmup=warmup, cores=self._number_of_cores, verbose=True)
+
+    def _sampling(self, vb: bool, seed: int = None, **kwargs):
         assert self.is_data_set
         assert self.is_model_loaded
         # Load the model in R
-        if seed is not None:
-            rpy2.robjects.r.set_seed(seed)
-        else:
+        if seed is None:
             seed = np.random.randint(0, 2 ** 31 - 1, dtype=np.int32)
 
         stdout = []
@@ -349,12 +351,17 @@ class RPyRunner(IStanResult):
         rpy2.rinterface_lib.callbacks.consolewrite_print = add_to_stdout
         rpy2.rinterface_lib.callbacks.consolewrite_warnerror = add_to_stderr
 
+        if vb:
+            fun = self._rstan.vb
+        else:
+            fun = self._rstan.sampling
+
+        self.clear_last_results()
+
         try:
             with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                fit = self._rstan.sampling(self._last_model_obj, data=self._data, chains=num_chains,
-                                           iter=int(num_samples + warmup),
-                                           warmup=int(warmup), seed=seed, cores=int(self._number_of_cores),
-                                           verbose=True, pars=self._pars_of_interest)
+                fit = fun(self._last_model_obj, data=self._data, seed=seed,
+                          pars=self._pars_of_interest, **kwargs)
         except rpy2.rinterface_lib.embedded.RRuntimeError as e:
             self._messages["sampling_output"] = "\n".join(stdout)
             self._messages["sampling_warnings"] = "\n".join(stderr)
@@ -377,40 +384,21 @@ class RPyRunner(IStanResult):
     def variational_bayes(self, seed: int = None,
                           algorithm: str = "meanfield",
                           importance_resampling: bool = False, iter: int = 10000, grad_samples: int = 1,
-                          elbo_samples: int = 100, eta: float = None, adapt_engaged: bool = True,
+                          elbo_samples: int = 100, eta: float = 1, adapt_engaged: bool = True,
                           tol_rel_obj: float = 0.01, eval_elbo: int = 100, output_samples: int = 1000,
                           adapt_iter: int = 50):
-        assert self.is_data_set
-        assert self.is_model_loaded
-        assert False
-        # Load the model in R
-        rstan = importr("rstan")
-        purrr = importr("purrr")
-        if seed is not None:
-            rpy2.robjects.r.set_seed(seed)
 
-        result = purrr.quietly(rstan.vb)(self._last_model_obj, data=self._data, seed=seed, algorithm=algorithm,
-                                         importance_resampling=importance_resampling,
-                                         iter=iter, grad_samples=grad_samples, elbo_samples=elbo_samples, eta=eta,
-                                         adapt_engaged=adapt_engaged, tol_rel_obj=tol_rel_obj, eval_elbo=eval_elbo,
-                                         output_samples=output_samples, adapt_iter=adapt_iter,
-                                         cores=self._number_of_cores,
-                                         verbose=True, pars=self._pars_of_interest)
-        output = "\n".join(list(result.rx2("output")))
-        warnings = "\n".join(list(result.rx2("warnings")))
-        fit = result.rx2("result")
-        self._messages["sampling_output"] = output
-        self._messages["sampling_warnings"] = warnings
 
-        self._result = fit
-        self._result_type = StanResultType.ADVI
+        if eta is None:
+            # Set it to missing object
+            eta = rpy2.robjects.NA_Real
 
-        stan = importr("rstan")
+        self._sampling(True, seed=seed, algorithm=algorithm,
+                       importance_resampling=importance_resampling,
+                       iter=iter, grad_samples=grad_samples, elbo_samples=elbo_samples, eta=eta,
+                       adapt_engaged=adapt_engaged, tol_rel_obj=tol_rel_obj, eval_elbo=eval_elbo,
+                       output_samples=output_samples, adapt_iter=adapt_iter)
 
-        summary = stan.summary_sim(result.slots['sim'])
-        self._onedim_parameters = list(rpy2.robjects.reval("(function(x){rownames(x$msd)})")(summary))
-        user_pars = [p for p in fit.slots["model_pars"] if p != "lp__"]
-        self._user_parameters = user_pars
 
     def MAP_estimate(self, seed: int = None, algorithm: str = "LBFGS",
                      importance_resampling: bool = False, iter: int = 2000, init_alpha: float = 0.001,
@@ -421,16 +409,52 @@ class RPyRunner(IStanResult):
         # Load the model in R
         rstan = importr("rstan")
         model = self._last_model_obj
-        if seed is not None:
-            rpy2.robjects.r.set_seed(seed)
+        if seed is None:
+            seed = np.random.randint(0, 2 ** 31 - 1, dtype=np.int32)
 
-        fit = rstan.optimizing(model, data=self._data, seed=seed, verbose=True, algorithm=algorithm, hessian=True,
-                               importance_resampling=importance_resampling, iter=iter, init_alpha=init_alpha,
-                               tol_obj=tol_obj, tol_rel_obj=tol_rel_obj, tol_grad=tol_grad, tol_rel_grad=tol_rel_grad,
-                               tol_param=tol_param, history_size=history_size)
+
+        stdout = []
+        stderr = []
+
+        def add_to_stdout(line):
+            stdout.append(line)
+
+        def add_to_stderr(line):
+            stderr.append(line)
+
+        stdout_orig = rpy2.rinterface_lib.callbacks.consolewrite_print
+        stderr_orig = rpy2.rinterface_lib.callbacks.consolewrite_warnerror
+
+        rpy2.rinterface_lib.callbacks.consolewrite_print = add_to_stdout
+        rpy2.rinterface_lib.callbacks.consolewrite_warnerror = add_to_stderr
+
+        try:
+            with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                fit = rstan.optimizing(model, data=self._data, seed=seed, verbose=True, algorithm=algorithm,
+                                       hessian=True,
+                                       importance_resampling=importance_resampling, iter=iter, init_alpha=init_alpha,
+                                       tol_obj=tol_obj, tol_rel_obj=tol_rel_obj, tol_grad=tol_grad,
+                                       tol_rel_grad=tol_rel_grad,
+                                       tol_param=tol_param, history_size=history_size)
+        except rpy2.rinterface_lib.embedded.RRuntimeError as e:
+            self._messages["sampling_output"] = "\n".join(stdout)
+            self._messages["sampling_warnings"] = "\n".join(stderr)
+            self._messages["sampling_error"] = str(e)
+            return
+        finally:
+            rpy2.rinterface_lib.callbacks.consolewrite_print = stdout_orig
+            rpy2.rinterface_lib.callbacks.consolewrite_warnerror = stderr_orig
+        self._messages["sampling_output"] = "\n".join(stdout)
+        self._messages["sampling_warnings"] = "\n".join(stderr)
+
         # TODO: Honor the self._pars_of_interest
         self._result = fit
+        hessian = fit.rx2("hessian")
+        cov = np.linalg.inv(hessian)
+        value = fit.rx2("par")
         self._result_type = StanResultType.Laplace
+        var_names = {name: i for i, name in enumerate(rpy2.robjects.reval("(function(x){names(x$par)})")(fit))}
+        self._result = {"value": value, "cov": cov, "map_value": fit.rx2("value"), "var_names": var_names}
 
     def _get_result(self, use_vb: bool, store_vectors: bool, CI_level_nr: int | dict[str, int] = 2) -> dict[
         str, ValueError]:
@@ -538,13 +562,14 @@ class RPyRunner(IStanResult):
         return self._stan_extract
 
     @property
-    def sample_count(self) -> int:
+    @overrides
+    def sample_count(self) -> int|None:
         assert self.is_model_sampled
         if self._result_type == StanResultType.Sampling or self._result_type == StanResultType.ADVI:
             sim = self._result.slots['sim']
             n_save = sim.rx2('n_save')
             return int(np.sum(n_save))
-        raise NotImplementedError("Sample count not implemented yet.")
+        return None
 
     @overrides
     def get_parameter_estimate(self, onedim_par_name: str, store_values: bool = False) -> ValueWithError:
@@ -565,8 +590,10 @@ class RPyRunner(IStanResult):
         elif self._result_type == StanResultType.Laplace:
             if store_values:
                 raise ValueError("Laplace approximation does not provide samples.")
-            else:  # TODO
-                raise NotImplementedError("Laplace approximation not implemented yet.")
+            var_idx = self._result["var_names"][onedim_par_name]
+            mean = self._result["map_value"][var_idx]
+            sigma = np.sqrt(self._result["cov"][var_idx, var_idx])
+            return ValueWithError(value=mean, SE=sigma)
         else:
             raise ValueError("No results available.")
 
@@ -597,27 +624,3 @@ class RPyRunner(IStanResult):
             raise ValueError("No results available.")
 
 
-def find_model_in_cache(model_cache: Path, model_name: str, model_hash: str) -> Path:
-    best_model_filename = None
-    for hash_char_count in range(0, len(model_hash)):
-        if hash_char_count == 0:
-            model_filename = model_cache / f"{model_name}.stan"
-        else:
-            model_filename = model_cache / f"{model_name} {model_hash[:hash_char_count]}.stan"
-        if model_filename.exists():
-            # load the model and check its hash if it matches
-            with model_filename.open("r") as f:
-                model_code = f.read()
-            if sha256(model_code.encode()).hexdigest() == model_hash:
-                if hash_char_count == len(model_hash) - 1:
-                    raise RuntimeError(
-                        f"Hash collision for model {model_name} with hash {model_hash} in cache file {model_filename}!")
-                return model_filename
-        else:
-            if best_model_filename is None:
-                best_model_filename = model_filename
-
-        hash_char_count += 1
-
-    assert best_model_filename is not None
-    return best_model_filename

@@ -4,13 +4,12 @@ from typing import Any
 
 
 def rcode_load_library(library_name: str) -> str:
-    out = (
-            'if(! "'
-            + library_name
-            + '" %in% installed.packages()) {install.packages("'
-            + library_name
-            + '" )}'
-    )
+    out = f"""
+    if(! "{library_name}" %in% installed.packages()) {{
+        install.packages("{library_name}")
+    }}
+    library({library_name})
+    """
     return out
 
 

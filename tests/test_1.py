@@ -2,7 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-from stan_runner import *
+from stan_runner import CmdStanRunner
+import cmdstanpy
 
 
 def model_generator_array(total_dim: list[int],
@@ -69,7 +70,7 @@ def model_generator_array(total_dim: list[int],
     model_code.append("}")
     model_code.append("")
     model_code.append("generated quantities {")
-    model_code.append(f"   {array_str}{matrix_type} par2;")
+    model_code.append(f"   {array_str}{matrix_type} par3;")
     if array_dim_count > 0:
         arr_index = ""
         braces_off = ""
@@ -79,10 +80,10 @@ def model_generator_array(total_dim: list[int],
             model_code.append(f"   {indent}for ({identifier} in 1:{array_dim[a]}) {{")
             arr_index += f"[{identifier}]"
             braces_off += "}"
-        model_code.append(f"   {indent}par2{arr_index} = par{arr_index} + 1;")
+        model_code.append(f"   {indent}par3{arr_index} = par{arr_index} + 1;")
         model_code.append(f"   {braces_off}")
     else:
-        model_code.append("   par2 = par + 1;")
+        model_code.append("   par3 = par + 1;")
     model_code.append("}")
     model_code.append("")
     model_str = "\n".join(model_code)
@@ -98,11 +99,24 @@ def model_generator_array(total_dim: list[int],
     return model_str, data_dict
 
 
+# def test_model_cmdstanpy(model_code: str, data: dict[str, str]):
+#     model_file = cmdstanpy
+#     model_cache_dir = Path(__file__).parent / "model_cache"
+#
+#     runner = CmdStanRunner(model_cache=model_cache_dir)
+#
+#     runner.install_dependencies()
+#
+#     runner
+#
+#
+#     stan_file="/home/Adama-docs/Adam/MyDocs/praca/TrainerEngine/lib/stan_runner/tests/model_cache/cov_model.stan", cpp_options={'STAN_THREADS':'true'})
+
 def test_model(model_code: str, data: dict[str, str]):
     # model_cache_dir should be an absolute string of the model_cache directory in the project's folder.
     model_cache_dir = Path(__file__).parent / "model_cache"
 
-    runner = RPyRunner(model_cache=model_cache_dir)
+    runner = CmdStanRunner(model_cache=model_cache_dir)
     runner.install_dependencies()
 
     runner.load_model_by_str(model_code, "test_model")
@@ -115,15 +129,13 @@ def test_model(model_code: str, data: dict[str, str]):
     if not runner.is_model_compiled:
         print(runner.messages["compile_error"])
         return
-    runner.set_data(data)
+    runner.load_data_by_dict(data)
     if not runner.is_data_set:
         print(runner.messages["data_error"])
         return
-    runner.sampling(num_samples=1000, num_chains=8)
-    if not runner.is_model_sampled:
-        print(runner.messages["sampling_error"])
-        return
-    print(runner)
+    sampling, messages = runner.sampling(iter_sampling=1000, num_chains=8)
+    # print(messages)
+    print(sampling.summary())
 
 
 def test1():
