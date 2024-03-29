@@ -2,19 +2,27 @@ import hashlib
 import io
 import subprocess
 import tempfile
+from _datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
+from json import JSONEncoder
 from multiprocessing import cpu_count
 from pathlib import Path
 from subprocess import run
 from typing import Any, Optional
-from _datetime import datetime
 
 import cmdstanpy
+import jsonpickle
 import numpy as np
 
 from .ifaces import StanErrorType
 from .result_adapter import InferenceResult
 from .utils import find_model_in_cache
+
+
+import json
+_fallback = json._default_encoder.default
+json._default_encoder.default = lambda obj: getattr(obj.__class__,  "to_json", _fallback)(obj)
+
 
 stan_CI_levels_dict = {0: 0.95, 1: 0.9, 2: 0.8, 3: 0.5}
 
@@ -313,7 +321,7 @@ class CmdStanRunner:
         now2 = datetime.now()
 
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages, runtime=now2-now1)
+        out = InferenceResult(ans, messages, runtime=now2 - now1)
         return out
 
     def variational_bayes(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
@@ -331,12 +339,12 @@ class CmdStanRunner:
                                                    sig_figs=self._other_opts.get("sig_figs", None),
                                                    draws=output_samples,
                                                    **kwargs)
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
                 return InferenceResult(None, messages)
         now2 = datetime.now()
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages, runtime=now2-now1)
+        out = InferenceResult(ans, messages, runtime=now2 - now1)
 
         return out
 
@@ -361,7 +369,7 @@ class CmdStanRunner:
         now2 = datetime.now()
 
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages, runtime=now2-now1)
+        out = InferenceResult(ans, messages, runtime=now2 - now1)
         return out
 
     def laplace_sample(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
@@ -384,7 +392,7 @@ class CmdStanRunner:
 
         now2 = datetime.now()
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages, runtime=now2-now1)
+        out = InferenceResult(ans, messages, runtime=now2 - now1)
         return out
 
     def optimize(self, **kwargs) -> tuple[Optional[cmdstanpy.CmdStanMLE], dict[str, str]]:
@@ -405,7 +413,7 @@ class CmdStanRunner:
                 return None, messages
 
         now2 = datetime.now()
-        return ans, {"stdout": stdout.getvalue(), "stderr": stderr.getvalue(), "runtime": now2-now1}
+        return ans, {"stdout": stdout.getvalue(), "stderr": stderr.getvalue(), "runtime": now2 - now1}
 
     @property
     def model_code(self) -> str | None:
@@ -413,3 +421,6 @@ class CmdStanRunner:
             with self._model_filename.open("r") as f:
                 return f.read()
         return None
+
+    def to_json(self) -> str:
+        return jsonpickle.encode(self)

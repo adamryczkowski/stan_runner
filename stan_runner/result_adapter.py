@@ -1,12 +1,17 @@
+import json
 import math
+from datetime import timedelta
 from enum import Enum
 
 import humanize
+import jsonpickle
 import numpy as np
 import prettytable
 from ValueWithError import ValueWithError, ValueWithErrorVec
 from cmdstanpy import CmdStanLaplace, CmdStanVB, CmdStanMCMC, CmdStanPathfinder
-from datetime import timedelta
+
+_fallback = json._default_encoder.default
+json._default_encoder.default = lambda obj: getattr(obj.__class__, "to_json", _fallback)(obj)
 
 
 class StanResultType(Enum):
@@ -226,7 +231,7 @@ class InferenceResult:
 
         # Calculate the smallest standard error of variances
         factor = np.sqrt(0.5 / (self.sample_count() - 1))
-        se = np.sqrt(min(np.diag(cov_matrix)))* factor
+        se = np.sqrt(min(np.diag(cov_matrix))) * factor
         digits = int(np.ceil(-np.log10(se))) + 1
 
         cov_matrix_txt = np.round(cov_matrix, digits)
@@ -341,3 +346,32 @@ class InferenceResult:
             return self.repr_without_sampling_errors()
         else:
             return self.repr_with_sampling_errors()
+
+    def all_main_effects(self)->dict[str, ValueWithError]:
+        out = {}
+        for par in self.onedim_parameters:
+            out[par] = self.get_parameter_estimate(par)
+        return out
+
+    def serialize_to_dict(self, output_type:str):
+        if output_type == "main_effects":
+            ans = self.all_main_effects()
+            return {key: {"value": ans[key].value, "error": ans[key].SE, "N": ans[key].N} for key in ans}
+        if output_type == "covariances":
+            means = self._result.stan_variables()
+            cov_matrix, one_dim_names = self.get_cov_matrix()
+            out = {}
+            out["cov"] = cov_matrix.tolist()
+            out["names"] = one_dim_names
+            out["means"] = means
+            return out
+        if output_type == "draws":
+            out = {}
+            out["draws"] = self.draws.tolist()
+            out["names"] = self.onedim_parameters
+            return out
+        raise ValueError("Unknown output type")
+    def to_json(self, output_type:str) -> str:
+        if output_type == "all":
+            return jsonpickle.encode(self)
+        return json.dumps(self.serialize_to_dict(output_type))
