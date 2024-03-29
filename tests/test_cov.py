@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from stan_runner import RPyRunner
+from stan_runner import CmdStanRunner
 
 from scipy.stats import random_correlation
 
@@ -42,7 +42,6 @@ model {
         "true_sigma": true_sigma
     }
 
-
     return model_str, data_dict
 
 
@@ -50,36 +49,45 @@ def test1():
     model_str, data_dict = model_generator_cov(nrow=10000)
     model_cache_dir = Path(__file__).parent / "model_cache"
 
-    runner = RPyRunner(model_cache_dir)
+    runner = CmdStanRunner(model_cache_dir)
     runner.load_model_by_str(model_str, "cov_model")
     assert runner.is_model_loaded
     runner.compile_model()
     assert runner.is_model_compiled
-    runner.set_data(data_dict)
+    runner.load_data_by_dict(data_dict)
     assert runner.is_data_set
     # runner.sampling(16000, num_chains=16)
-    runner.variational_bayes()
-    if not runner.is_model_sampled:
-        print(runner.get_messages(False))
-
     print(data_dict["true_mu"])
     print(data_dict["true_sigma"])
-    print(runner.repr_without_sampling_errors())
 
-    # runner.sampling(num_samples=4000, num_chains=8)
-    # if not runner.is_model_sampled:
-    #     print(runner.get_messages(False))
-    # print(runner)
+    mcmc = runner.sampling(iter_sampling=4000, num_chains=8)
+    if mcmc.is_error:
+        print(mcmc.messages)
+    else:
+        print(mcmc.repr_without_sampling_errors())
+        print(mcmc.pretty_cov_matrix(["mu1", "mu2"]))
 
-    runner.MAP_estimate()
-    print(runner.repr_without_sampling_errors())
+    vb = runner.variational_bayes(algorithm="fullrank")
+    if vb.is_error:
+        print(vb.messages)
+    else:
+        print(vb.repr_without_sampling_errors())
+        print(vb.pretty_cov_matrix(["mu1", "mu2"]))
 
+    map = runner.laplace_sample()
+    if map.is_error:
+        print(map.messages)
+    else:
+        print(map.repr_without_sampling_errors())
+        print(map.pretty_cov_matrix(["mu1", "mu2"]))
 
-
-
+    pf = runner.pathfinder(output_samples=4000)
+    if pf.is_error:
+        print(pf.messages)
+    else:
+        print(pf.repr_without_sampling_errors())
+        print(pf.pretty_cov_matrix(["mu1", "mu2"]))
 
 
 if __name__ == '__main__':
     test1()
-
-

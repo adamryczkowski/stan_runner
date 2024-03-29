@@ -3,16 +3,16 @@ import io
 import subprocess
 import tempfile
 from contextlib import redirect_stdout, redirect_stderr
+from multiprocessing import cpu_count
 from pathlib import Path
 from subprocess import run
 from typing import Any, Optional
-from multiprocessing import cpu_count
+from _datetime import datetime
 
 import cmdstanpy
 import numpy as np
-from overrides import overrides
 
-from .ifaces import IStanResult, StanErrorType
+from .ifaces import StanErrorType
 from .result_adapter import InferenceResult
 from .utils import find_model_in_cache
 
@@ -33,7 +33,7 @@ def initialize(cpu_cores: int = 1):
     cmdstanpy.install_cmdstan(verbose=True, overwrite=False, cores=cpu_cores)
 
 
-class CmdStanRunner(IStanResult):
+class CmdStanRunner:
     _number_of_cores: int
     _stanc_opts: dict[str, Any]
     _cpp_opts: dict[str, Any]
@@ -93,7 +93,6 @@ class CmdStanRunner(IStanResult):
             assert isinstance(sig_figs, int)
             self._other_opts["sig_figs"] = sig_figs
 
-    @overrides
     def install_dependencies(self):
         if self._initialized:
             return
@@ -101,7 +100,6 @@ class CmdStanRunner(IStanResult):
         initialize(self.number_of_cores)
         self._initialized = True
 
-    @overrides
     def clear(self):
         self._last_model_hash = ""
         self._messages = {}
@@ -130,7 +128,6 @@ class CmdStanRunner(IStanResult):
         self._data = None
 
     @property
-    @overrides
     def error_state(self) -> StanErrorType:
         if "stanc_error" in self._messages:
             return StanErrorType.SYNTAX_ERROR
@@ -139,36 +136,29 @@ class CmdStanRunner(IStanResult):
         return StanErrorType.NO_ERROR
 
     @property
-    @overrides
     def messages(self) -> dict[str, str]:
         return self._messages
 
     @property
-    @overrides
     def is_initialized(self) -> bool:
         return self._initialized
 
     @property
-    @overrides
     def is_model_loaded(self) -> bool:
         return self._model_filename is not None
 
     @property
-    @overrides
     def is_error(self) -> bool:
         return "stanc_error" in self._messages or "compile_error" in self._messages
 
     @property
-    @overrides
     def is_model_compiled(self) -> bool:
         return isinstance(self._stan_model, cmdstanpy.CmdStanModel)
 
     @property
-    @overrides
     def is_data_set(self) -> bool:
         return self._data is not None
 
-    @overrides
     def get_messages(self, error_only: bool) -> str:
         output = []
         items = ["stanc_output", "stanc_warnings", "stanc_error",
@@ -306,6 +296,8 @@ class CmdStanRunner(IStanResult):
         stdout = io.StringIO()
         stderr = io.StringIO()
 
+        now1 = datetime.now()
+
         with redirect_stdout(stdout), redirect_stderr(stderr):
             try:
                 ans = self._stan_model.sample(data=self._data, chains=num_chains, parallel_chains=parallel_chains,
@@ -318,8 +310,10 @@ class CmdStanRunner(IStanResult):
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
                 return InferenceResult(None, messages)
 
+        now2 = datetime.now()
+
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages)
+        out = InferenceResult(ans, messages, runtime=now2-now1)
         return out
 
     def variational_bayes(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
@@ -328,6 +322,8 @@ class CmdStanRunner(IStanResult):
 
         stdout = io.StringIO()
         stderr = io.StringIO()
+
+        now1 = datetime.now()
 
         with redirect_stdout(stdout), redirect_stderr(stderr):
             try:
@@ -338,8 +334,9 @@ class CmdStanRunner(IStanResult):
             except subprocess.CalledProcessError as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
                 return InferenceResult(None, messages)
+        now2 = datetime.now()
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages)
+        out = InferenceResult(ans, messages, runtime=now2-now1)
 
         return out
 
@@ -348,6 +345,8 @@ class CmdStanRunner(IStanResult):
 
         stdout = io.StringIO()
         stderr = io.StringIO()
+
+        now1 = datetime.now()
 
         with redirect_stdout(stdout), redirect_stderr(stderr):
             try:
@@ -359,8 +358,10 @@ class CmdStanRunner(IStanResult):
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
                 return InferenceResult(None, messages)
 
+        now2 = datetime.now()
+
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages)
+        out = InferenceResult(ans, messages, runtime=now2-now1)
         return out
 
     def laplace_sample(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
@@ -368,6 +369,8 @@ class CmdStanRunner(IStanResult):
 
         stdout = io.StringIO()
         stderr = io.StringIO()
+
+        now1 = datetime.now()
 
         with redirect_stdout(stdout), redirect_stderr(stderr):
             try:
@@ -378,8 +381,10 @@ class CmdStanRunner(IStanResult):
             except subprocess.CalledProcessError as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
                 return InferenceResult(None, messages)
+
+        now2 = datetime.now()
         messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-        out = InferenceResult(ans, messages)
+        out = InferenceResult(ans, messages, runtime=now2-now1)
         return out
 
     def optimize(self, **kwargs) -> tuple[Optional[cmdstanpy.CmdStanMLE], dict[str, str]]:
@@ -387,6 +392,8 @@ class CmdStanRunner(IStanResult):
 
         stdout = io.StringIO()
         stderr = io.StringIO()
+
+        now1 = datetime.now()
 
         with redirect_stdout(stdout), redirect_stderr(stderr):
             try:
@@ -396,7 +403,9 @@ class CmdStanRunner(IStanResult):
             except subprocess.CalledProcessError as e:
                 messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
                 return None, messages
-        return ans, {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
+
+        now2 = datetime.now()
+        return ans, {"stdout": stdout.getvalue(), "stderr": stderr.getvalue(), "runtime": now2-now1}
 
     @property
     def model_code(self) -> str | None:

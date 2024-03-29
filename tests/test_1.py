@@ -133,9 +133,9 @@ def test_model(model_code: str, data: dict[str, str]):
     if not runner.is_data_set:
         print(runner.messages["data_error"])
         return
-    sampling, messages = runner.sampling(iter_sampling=1000, num_chains=8)
+    result = runner.sampling(iter_sampling=1000, num_chains=8)
     # print(messages)
-    print(sampling.summary())
+    print(result)
 
 
 def test1():

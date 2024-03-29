@@ -1,9 +1,12 @@
-import numpy as np
-from cmdstanpy import CmdStanLaplace, CmdStanVB, CmdStanMCMC, CmdStanPathfinder
-from enum import Enum
-from ValueWithError import ValueWithError, ValueWithErrorVec, ValueWithErrorCI
-import prettytable
 import math
+from enum import Enum
+
+import humanize
+import numpy as np
+import prettytable
+from ValueWithError import ValueWithError, ValueWithErrorVec
+from cmdstanpy import CmdStanLaplace, CmdStanVB, CmdStanMCMC, CmdStanPathfinder
+from datetime import timedelta
 
 
 class StanResultType(Enum):
@@ -15,13 +18,14 @@ class StanResultType(Enum):
 
 
 class InferenceResult:
-    _result: CmdStanLaplace | CmdStanVB | CmdStanMCMC | CmdStanPathfinder
+    _result: CmdStanLaplace | CmdStanVB | CmdStanMCMC | CmdStanPathfinder | None
     _messages: dict[str, str] | None = None
     _draws: np.ndarray | None
     _user2onedim: dict[str, list[str]] | None  # Translates user parameter names to one-dim parameter names
+    _runtime: timedelta | None  # Time taken to run the inference
 
     def __init__(self, result: CmdStanLaplace | CmdStanVB | CmdStanMCMC | CmdStanPathfinder | None,
-                 messages: dict[str, str]) -> None:
+                 messages: dict[str, str], runtime: timedelta = None) -> None:
         if result is not None:
             assert isinstance(result, (CmdStanLaplace, CmdStanVB, CmdStanMCMC, CmdStanPathfinder))
             assert isinstance(messages, dict)
@@ -30,6 +34,9 @@ class InferenceResult:
         self._draws = None
         self._messages = messages
         self._user2onedim = None
+        if runtime is not None:
+            assert isinstance(runtime, timedelta)
+            self._runtime = runtime
 
     def make_dict(self):
         if self._user2onedim is not None:
@@ -54,6 +61,10 @@ class InferenceResult:
                         if idx[j] >= dims[j]:
                             idx[j] = 0
                             idx[j - 1] += 1
+
+    @property
+    def is_error(self) -> bool:
+        return self._result is None
 
     def get_onedim_parameter_names(self, user_parameter_name: str) -> list[str]:
         self.make_dict()
@@ -208,11 +219,31 @@ class InferenceResult:
         else:
             raise ValueError("Unknown result type")
 
+    def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
+        cov_matrix, one_dim_names = self.get_cov_matrix(user_parameter_names)
+        out = prettytable.PrettyTable()
+        out.field_names = [""] + one_dim_names
+
+        # Calculate the smallest standard error of variances
+        factor = np.sqrt(0.5 / (self.sample_count() - 1))
+        se = np.sqrt(min(np.diag(cov_matrix)))* factor
+        digits = int(np.ceil(-np.log10(se))) + 1
+
+        cov_matrix_txt = np.round(cov_matrix, digits)
+
+        for i in range(len(one_dim_names)):
+            # Suppres scientific notation
+            out.add_row([one_dim_names[i]] + [f"{cov_matrix_txt[i, j]:.4f}" for j in range(len(one_dim_names))])
+        return str(out)
+
     def repr_with_sampling_errors(self):
         # Table example:
         #         mean   se_mean       sd       10%      90%
         # mu  7.751103 0.1113406 5.199004 1.3286256 14.03575
         # tau 6.806410 0.1785522 6.044944 0.9572097 14.48271
+        out = self.method_name() + "\n"
+
+        out += self.formatted_runtime() + "\n"
 
         table = prettytable.PrettyTable()
         table.field_names = ["Parameter", "index", "mu", "sigma", "10%", "90%"]
@@ -244,7 +275,7 @@ class InferenceResult:
                             idx[j] = 0
                             idx[j - 1] += 1
 
-        return str(table)
+        return out + str(table)
 
     def method_name(self) -> str:
         if self.result_type == StanResultType.NONE:
@@ -263,6 +294,9 @@ class InferenceResult:
         #        value        10%      90%
         # mu  7.751103  1.3286256 14.03575
         # tau 6.806410  0.9572097 14.48271
+        out = self.method_name() + "\n"
+
+        out += self.formatted_runtime() + "\n"
 
         table = prettytable.PrettyTable()
         table.field_names = ["Parameter", "index", "value", "10%", "90%"]
@@ -294,11 +328,16 @@ class InferenceResult:
                             idx[j] = 0
                             idx[j - 1] += 1
 
-        return str(table)
+        return out + str(table)
+
+    def formatted_runtime(self) -> str:
+        if self._runtime is None:
+            return "Run time: not available"
+        else:
+            return f"Run taken: {humanize.precisedelta(self._runtime)}"
 
     def __repr__(self):
-        out = self.method_name() + "\n"
         if self.sample_count is None:
-            return out + self.repr_without_sampling_errors()
+            return self.repr_without_sampling_errors()
         else:
-            return out + self.repr_with_sampling_errors()
+            return self.repr_with_sampling_errors()
