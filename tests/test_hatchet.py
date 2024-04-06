@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from stan_runner import *
 
+
 def test1():
     load_dotenv()
 

@@ -14,10 +14,10 @@ import cmdstanpy
 import jsonpickle
 import numpy as np
 
-from .ifaces import StanErrorType
+from .ifaces import StanErrorType, IStanRunner, IInferenceResult
 from .result_adapter import InferenceResult
 from .utils import find_model_in_cache
-
+from overrides import overrides
 
 import json
 _fallback = json._default_encoder.default
@@ -41,7 +41,7 @@ def initialize(cpu_cores: int = 1):
     cmdstanpy.install_cmdstan(verbose=True, overwrite=False, cores=cpu_cores)
 
 
-class CmdStanRunner:
+class CmdStanRunner(IStanRunner):
     _number_of_cores: int
     _stanc_opts: dict[str, Any]
     _cpp_opts: dict[str, Any]
@@ -136,6 +136,7 @@ class CmdStanRunner:
         self._data = None
 
     @property
+    @overrides
     def error_state(self) -> StanErrorType:
         if "stanc_error" in self._messages:
             return StanErrorType.SYNTAX_ERROR
@@ -152,6 +153,7 @@ class CmdStanRunner:
         return self._initialized
 
     @property
+    @overrides
     def is_model_loaded(self) -> bool:
         return self._model_filename is not None
 
@@ -160,6 +162,7 @@ class CmdStanRunner:
         return "stanc_error" in self._messages or "compile_error" in self._messages
 
     @property
+    @overrides
     def is_model_compiled(self) -> bool:
         return isinstance(self._stan_model, cmdstanpy.CmdStanModel)
 
@@ -167,6 +170,7 @@ class CmdStanRunner:
     def is_data_set(self) -> bool:
         return self._data is not None
 
+    @overrides
     def get_messages(self, error_only: bool) -> str:
         output = []
         items = ["stanc_output", "stanc_warnings", "stanc_error",
@@ -179,6 +183,7 @@ class CmdStanRunner:
                 output.append(self._messages[item])
         return "\n".join(output)
 
+    @overrides
     def load_model_by_file(self, stan_file: str | Path, model_name: str | None = None, pars_list: list[str] = None):
         if not self.is_initialized:
             self.install_dependencies()
@@ -228,6 +233,7 @@ class CmdStanRunner:
         self._model_filename = model_filename
         self._last_model_hash = model_hash
 
+    @overrides
     def load_model_by_str(self, model_code: str | list[str], model_name: str, pars_list: list[str] = None):
         if not self.is_initialized:
             self.install_dependencies()
@@ -276,6 +282,7 @@ class CmdStanRunner:
         self._messages["compile_warning"] = stderr.getvalue()
         self._stan_model = model
 
+    @overrides
     def load_data_by_file(self, data_file: str | Path):
         """Loads data from a structureal file. Right now, the supported format is only JSON."""
         if isinstance(data_file, str):
@@ -285,13 +292,15 @@ class CmdStanRunner:
         assert data_file.is_file()
         self._data = data_file
 
+    @overrides
     def load_data_by_dict(self, data: dict[str, float | int | np.ndarray]):
         assert isinstance(data, dict)
         self._data = data
 
+    @overrides
     def sampling(self, num_chains: int, iter_sampling: int = None,
                  iter_warmup: int = None, thin: int = 1, max_treedepth: int = None,
-                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> InferenceResult:
+                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> IInferenceResult:
 
         assert self.is_model_compiled
 
@@ -324,7 +333,8 @@ class CmdStanRunner:
         out = InferenceResult(ans, messages, runtime=now2 - now1)
         return out
 
-    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
+    @overrides
+    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
 
         assert self.is_model_compiled
 
@@ -348,7 +358,8 @@ class CmdStanRunner:
 
         return out
 
-    def pathfinder(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
+    @overrides
+    def pathfinder(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
         assert self.is_model_compiled
 
         stdout = io.StringIO()
@@ -372,7 +383,8 @@ class CmdStanRunner:
         out = InferenceResult(ans, messages, runtime=now2 - now1)
         return out
 
-    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> InferenceResult:
+    @overrides
+    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
         assert self.is_model_compiled
 
         stdout = io.StringIO()

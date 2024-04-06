@@ -10,8 +10,7 @@ from hatchet_sdk import Hatchet, Context
 from .cmdstan_runner import CmdStanRunner, InferenceResult
 from pathlib import Path
 
-hatchet = Hatchet(debug=True)
-
+hatchet = Hatchet()
 
 @hatchet.workflow(on_events=["simple:create"])
 class Hatchet_StanRunner:
