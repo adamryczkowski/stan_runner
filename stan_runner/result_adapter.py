@@ -388,7 +388,8 @@ class InferenceResult(IInferenceResult):
     def serialize_to_dict(self, output_type: str):
         if output_type == "main_effects":
             ans = self.all_main_effects()
-            return {key: {"value": ans[key].value, "error": ans[key].SE, "N": ans[key].N} for key in ans}
+            ans_dict = {key: {"value": ans[key].value, "error": ans[key].SE, "N": ans[key].N} for key in ans}
+            return {"main_effects": ans_dict}
         if output_type == "covariances":
             means = self._result.stan_variables()
             cov_matrix, one_dim_names = self.get_cov_matrix()
@@ -396,19 +397,18 @@ class InferenceResult(IInferenceResult):
             out["cov"] = cov_matrix.tolist()
             out["names"] = one_dim_names
             out["means"] = means
-            return out
+            return {"covariances": out}
         if output_type == "draws":
             out = {}
             out["draws"] = self.draws.tolist()
             out["names"] = self.onedim_parameters
-            return out
+            return {"draws": out}
         if output_type == "raw":
             file = self.serialize()
             # Encode file as base64
             with open(file, "rb") as f:
                 data = f.read()
-                return base64.b64encode(data).decode("utf-8")
-
+                return {"raw": base64.b64encode(data).decode("utf-8")}
 
         raise ValueError("Unknown output type")
 
@@ -430,6 +430,15 @@ class InferenceResult(IInferenceResult):
         zip_file = output_dir.parent / (output_dir.name + ".zip")
         shutil.make_archive(str(output_dir), 'zip', zip_file)
         return zip_file
+
+    @staticmethod
+    def DeserializeFromString(raw_str: str) -> InferenceResult:
+        # Decode the base64 string into temp zip file.
+        zip_path = Path(tempfile.TemporaryDirectory().name)
+        with open(zip_path, "wb") as f:
+            f.write(base64.b64decode(raw_str))
+
+        return InferenceResult.Deserialize(zip_path, bDeleteAfterwards=True)
 
     @staticmethod
     def Deserialize(zip_path: Path, bDeleteAfterwards: bool = False) -> InferenceResult:

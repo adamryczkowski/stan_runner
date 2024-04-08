@@ -1,11 +1,13 @@
+import math
 from abc import ABC, abstractmethod
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from cmdstanpy import CmdStanMCMC
 
 import numpy as np
 from ValueWithError import ValueWithError
+from cmdstanpy import CmdStanMCMC
 
 
 class StanErrorType(Enum):
@@ -40,9 +42,54 @@ class StanOutputScope(Enum):
         else:
             raise ValueError(f"Unknown StanOutputScope: {self}")
 
+    def txt_value(self):
+        if self == StanOutputScope.MainEffects:
+            return "main_effects"
+        elif self == StanOutputScope.Covariances:
+            return "covariances"
+        elif self == StanOutputScope.FullSamples:
+            return "draws"
+        elif self == StanOutputScope.RawOutput:
+            return "raw"
+        else:
+            raise ValueError(f"Unknown StanOutputScope: {self}")
 
 
 class IInferenceResult(ABC):
+    _runtime: timedelta | None
+    _messages: dict[str, str] | None = None
+    _user2onedim: dict[str, list[str]] | None  # Translates user parameter names to one-dim parameter names
+
+    def __init__(self, messages: dict[str, str], runtime: timedelta | None):
+        self._runtime = runtime
+        self._messages = messages
+        self._user2onedim = None
+
+    # This member function is to be treated as protected, only accessible by method of derived classes, and not by the user
+    def _make_dict(self):
+        if self._user2onedim is not None:
+            return
+        self._user2onedim = {}
+        for user_par in self.user_parameters:
+            dims = self.get_parameter_shape(user_par)
+            if len(dims) == 0:
+                self._user2onedim[user_par] = [user_par]
+            else:
+                max_idx = math.prod(dims)
+                idx = [0 for _ in dims]
+                i = 0
+                self._user2onedim[user_par] = []
+                while i < max_idx:
+                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
+                    par_name = f"{user_par}{idx_txt}"
+                    self._user2onedim[user_par].append(par_name)
+                    i += 1
+                    idx[-1] += 1
+                    for j in range(len(dims) - 1, 0, -1):
+                        if idx[j] >= dims[j]:
+                            idx[j] = 0
+                            idx[j - 1] += 1
+
     @property
     @abstractmethod
     def is_error(self) -> bool:
