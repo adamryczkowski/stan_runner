@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
-from typing import Any
-from ValueWithError import ValueWithError
-from .cmdstan_runner import InferenceResult
+from typing import Any, List
 
 import numpy as np
+from ValueWithError import ValueWithError, ValueWithErrorVec, IValueWithError
+from overrides import overrides
 
+from .ifaces import StanResultEngine
+from .cmdstan_runner import InferenceResult
 from .ifaces import StanOutputScope, IInferenceResult
+from .utils import infer_param_shapes
 
 
 def denumpy_dict(d: dict[str, Any]) -> dict[str, Any]:
@@ -49,7 +53,10 @@ def post_model_to_server(hatchet: "Hatchet", stan_code: str, model_name: str, da
 
     return messageID
 
+
 from hatchet_sdk import Hatchet
+
+
 class RemoteStanRunner:
     _hatchet: "Hatchet" | None
     _server_url: str
@@ -223,9 +230,11 @@ class DelayedInferenceResult:
         self._hatchet = hatchet
 
     def wait(self, timeout: int = None) -> dict[str, IInferenceResult] | None:
+        if timeout is not None:
+            raise NotImplementedError
         from hatchet_sdk import StepRunEventType
         from hatchet_sdk.client import ClientImpl
-        event_payload = None
+        from hatchet_sdk.clients.listener import StepRunEvent
         print(f"Waiting for result: {self._messageID}")
 
         # def on_event(event):
@@ -233,45 +242,45 @@ class DelayedInferenceResult:
         #     event_payload = event.payload
 
         # Hatchet_StanRunner-fcc542/run
-        event:StepRunEventType
 
-        client:ClientImpl = self._hatchet.client
+        client: ClientImpl = self._hatchet.client
 
-        from hatchet_sdk.clients.rest.models.step_run import StepRun
         # sr:StepRun = client.rest_client.step_run_get(self._messageID)
         # sr = StepRun(1,2,3)
 
-
-        from hatchet_sdk import WorkflowRun
         # workflow_run:WorkflowRun = self._hatchet.client.rest_client.workflow_run_get(self._messageID)
-
 
         # workflow_run.status
         # self._hatchet.client.rest().workflow_list()
         ans = {}
+        event: StepRunEvent
 
         for event in self._hatchet.client.listener.stream(self._messageID):
             print(event)
             payload = event.payload
+            assert isinstance(payload, dict)
             if payload is not None:
                 event_payload = payload
                 result = event_payload["result"]
                 for key, payload in result.items():
+                    result_type_str = key.split("_")[0]
+                    result_type = StanResultEngine.from_str(result_type_str)
                     assert isinstance(payload, dict)
                     assert len(payload) == 1
-                    if "raw" in payload:
-                        obj = InferenceResult.DeserializeFromString(payload["raw"])
-                    elif "draws" in payload:
-                        obj = InferenceResultFullSamples(payload["draws"], payload["runtime"])
-                    elif "covariances" in payload:
-                        obj = InferenceResultCovariances(payload["covariances"], payload["runtime"])
-                    elif "main_effects" in payload:
-                        obj = InferenceResultMainEffects(payload["main_effects"], payload["runtime"])
-                    else:
-                        raise ValueError("Unknown result type")
-                    ans[key] = obj
-
-
+                    for key, arg_dict in payload.items():
+                        arg_dict["runtime"] = timedelta(seconds=arg_dict["runtime"]) if "runtime" in arg_dict else None
+                        arg_dict["result_type"] = result_type
+                        if key == "raw":
+                            obj = InferenceResult.DeserializeFromString(**arg_dict)
+                        elif key == "draws":
+                            obj = InferenceResultFullSamples(**arg_dict)
+                        elif key == "covariances":
+                            obj = InferenceResultCovariances(**arg_dict)
+                        elif key == "main_effects":
+                            obj = InferenceResultMainEffects.FromDict(**arg_dict)
+                        else:
+                            raise ValueError("Unknown result type")
+                        ans[key] = obj
 
         print(f"Found result: {ans}")
 
@@ -284,6 +293,7 @@ class DelayedInferenceResult:
 
     @property
     def is_computed(self) -> bool:
+        assert NotImplementedError
         import hatchet_sdk.clients.listener
 
         def get_metadata(token: str):
@@ -299,28 +309,201 @@ class DelayedInferenceResult:
 
         return True
 
-    # def get_result(self) -> IInferenceResult:
+
+# def get_result(self) -> IInferenceResult:
 
 
 class InferenceResultMainEffects(IInferenceResult):
-    _vars: dict[str, ValueWithError]
-    _user2onedim: dict[str, list[str]] | None  # Translates user parameter names to one-dim parameter names
+    _vars: dict[str, IValueWithError]
+    _result_type: StanResultEngine
+    _param_shapes: dict[str, tuple[int, ...]]
+    _sample_count: int
+    _method_name: str
 
-    def __init__(self, vars: dict[str, ValueWithError], user2onedim: dict[str, list[str]] | None = None):
+    @staticmethod
+    def FromDict(vars: dict[str, dict[str, float | int]],
+                 messages: dict[str, str], runtime: timedelta | None,
+                 result_type: StanResultEngine, sample_count: int,
+                 method_name: str) -> InferenceResultMainEffects:
+        param_shapes, user2onedim = infer_param_shapes(list(vars.keys()))
+        err_vars = {key: ValueWithError(**value) for key, value in vars.items()}
+
+        obj = InferenceResultMainEffects(vars=err_vars, user2onedim=user2onedim, param_shapes=param_shapes,
+                                         messages=messages, runtime=runtime, result_type=result_type,
+                                         sample_count=sample_count, method_name=method_name)
+        return obj
+
+    def __init__(self, vars: dict[str, IValueWithError],
+                 user2onedim: dict[str, list[str]], param_shapes: dict[str, tuple[int, ...]],
+                 messages: dict[str, str], runtime: timedelta | None, result_type: StanResultEngine, sample_count: int,
+                 method_name: str):
+        super().__init__(messages=messages, runtime=runtime)
+        assert isinstance(vars, dict)
+        assert all(isinstance(vars[key], IValueWithError) for key in vars)
+        assert isinstance(user2onedim, dict) or user2onedim is None
+        assert all(value in vars for values in user2onedim.values() for value in values)
+        assert isinstance(result_type, StanResultEngine)
+        assert isinstance(param_shapes, dict)
+        assert isinstance(sample_count, int)
+        assert isinstance(method_name, str)
+
         self._vars = vars
         self._user2onedim = user2onedim
+        self._param_shapes = param_shapes
+        self._result_type = result_type
+        self._validate_parameter_shapes(param_shapes)
+        self._sample_count = sample_count
+        self._method_name = method_name
 
-    pass
+    def _validate_parameter_shapes(self, param_shapes: dict[str, tuple[int, ...]]):
+        for key, shape in param_shapes.items():
+            assert key in self._vars
+            count = np.prod(shape)
+            assert count == len(self.get_onedim_parameter_names(key))
+
+    @property
+    @overrides
+    def result_type(self) -> StanResultEngine:
+        return self._result_type
+
+    @property
+    @overrides
+    def result_scope(self) -> StanOutputScope:
+        return StanOutputScope.MainEffects
+
+    @overrides
+    def serialize_to_file(self, output_type: str, file_name: str):
+        raise NotImplementedError
+
+    @overrides
+    def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
+        assert user_parameter_name in self._param_shapes
+        return self._param_shapes[user_parameter_name]
+
+    @overrides
+    def sample_count(self, onedim_parameter_name: str = None) -> float | int | None:
+        if onedim_parameter_name is not None:
+            return self._vars[onedim_parameter_name].N
+        else:
+            return self._sample_count
+
+    @property
+    @overrides
+    def draws(self) -> np.ndarray:
+        # Does not make sense for main effects
+        raise NotImplementedError
+
+    @overrides
+    def get_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> IValueWithError:
+        if store_values:
+            raise NotImplementedError
+        return self._vars[onedim_parameter_name]
+
+    @overrides
+    def get_parameter_mu(self, user_parameter_name: str) -> np.ndarray:
+        onedim_parameter_names = self.get_onedim_parameter_names(user_parameter_name)
+        return np.array([self._vars[key].estimateMean() for key in onedim_parameter_names])
+
+    @overrides
+    def get_parameter_sigma(self, user_parameter_name: str) -> np.ndarray:
+        onedim_parameter_names = self.get_onedim_parameter_names(user_parameter_name)
+        return np.array([self._vars[key].estimateSE() for key in onedim_parameter_names])
+
+    @overrides
+    def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
+        raise NotImplementedError
+
+    @property
+    @overrides
+    def method_name(self) -> str:
+        return self._method_name
+
+    @overrides
+    def all_main_effects(self) -> dict[str, IValueWithError]:
+        return self._vars
+
+    @overrides
+    def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
+        raise NotImplementedError
 
 
-class InferenceResultCovariances(IInferenceResult):
-    _vars: dict[str, ValueWithError]
+class InferenceResultCovariances(InferenceResultMainEffects):
     _covariance: np.ndarray
-    pass
+
+    def __init__(self, names: list[str], cov: np.ndarray, means: np.ndarray, N: np.ndarray,
+                 runtime: timedelta | None, messages: dict[str, str], result_type: StanResultEngine):
+        assert isinstance(cov, np.ndarray)
+        assert isinstance(means, np.ndarray)
+        assert isinstance(N, np.ndarray)
+        assert cov.shape[0] == cov.shape[1]
+        assert cov.shape[0] == len(names)
+        assert means.shape[0] == len(names)
+        assert N.shape[0] == len(names)
+
+        super_vars = {name: {"value": value, "SE": SE, "N": N} for name, value, SE, N in
+                      zip(names, means, np.sqrt(np.diag(cov)), N)}
+
+        super().__init__(vars=super_vars,
+                         messages=messages, runtime=runtime, result_type=result_type, sample_count=0,
+                         method_name="Covariances")
+
+    @overrides
+    def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
+        assert one_dim_par1 in self._vars
+        assert one_dim_par2 in self._vars
+
+        return self._covariance[one_dim_par1, one_dim_par2]
+
+    @property
+    @overrides
+    def result_scope(self) -> StanOutputScope:
+        return StanOutputScope.Covariances
 
 
-class InferenceResultFullSamples(IInferenceResult):
-    pass
+class InferenceResultFullSamples(InferenceResultMainEffects):
+    _vars: dict[str, ValueWithErrorVec]
+
+    def __init__(self, draws: list[np.ndarray | list[float | int]], names: list[str],
+                 messages: dict[str, str], runtime: timedelta | None, result_type: StanResultEngine,
+                 method_name: str):
+        assert isinstance(draws, list)
+        assert isinstance(names, list)
+        assert len(draws) == len(names)
+        assert len(draws) > 0
+        sample_len = len(draws[0])
+        assert isinstance(all(len(draw) == sample_len for draw in draws), bool)
+
+        param_shapes, user2onedim = infer_param_shapes(names)
+        draws = {name: ValueWithErrorVec(draws[i]) for i, name in enumerate(names)}
+
+        super().__init__(vars=draws, user2onedim=user2onedim, param_shapes=param_shapes,
+                         messages=messages, runtime=runtime, result_type=result_type,
+                         sample_count=sample_len, method_name=method_name)
+
+    @property
+    @overrides
+    def result_scope(self) -> StanOutputScope:
+        return StanOutputScope.FullSamples
+
+    @property
+    @overrides
+    def draws(self) -> np.ndarray:
+        onedim_varnames = self.onedim_parameters
+        ans = np.array([self._vars[name].vector for name in onedim_varnames])
+        ans.dtype.names = onedim_varnames
+        return ans
+
+    @overrides
+    def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
+        if user_parameter_names is None:
+            user_parameter_names = self.onedim_parameters
+
+        onedim_parameter_names = [name for user_name in user_parameter_names for name in
+                                  self.get_onedim_parameter_names(user_name)]
+        cov_matrix = np.array(
+            [[np.cov(self._vars[name].vector, self._vars[name2].vector) for name in onedim_parameter_names] for name2 in
+             onedim_parameter_names])
+        return cov_matrix, onedim_parameter_names
 
 
 class RemoteInferenceResultPromise:

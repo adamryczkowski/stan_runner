@@ -9,7 +9,6 @@ import tempfile
 from datetime import timedelta
 from pathlib import Path
 
-import humanize
 import jsonpickle
 import numpy as np
 import prettytable
@@ -80,7 +79,6 @@ class InferenceResult(IInferenceResult):
         self._make_dict()
         return self._user2onedim[user_parameter_name]
 
-    @overrides
     def get_onedim_parameter_index(self, onedim_parameter_name: str) -> int:
         return self._result.column_names.index(onedim_parameter_name)
 
@@ -249,66 +247,9 @@ class InferenceResult(IInferenceResult):
         else:
             raise ValueError("Unknown result type")
 
-    @overrides
-    def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
-        cov_matrix, one_dim_names = self.get_cov_matrix(user_parameter_names)
-        out = prettytable.PrettyTable()
-        out.field_names = [""] + one_dim_names
 
-        # Calculate the smallest standard error of variances
-        factor = np.sqrt(0.5 / (self.sample_count() - 1))
-        se = np.sqrt(min(np.diag(cov_matrix))) * factor
-        digits = int(np.ceil(-np.log10(se))) + 1
 
-        cov_matrix_txt = np.round(cov_matrix, digits)
-
-        for i in range(len(one_dim_names)):
-            # Suppres scientific notation
-            out.add_row([one_dim_names[i]] + [f"{cov_matrix_txt[i, j]:.4f}" for j in range(len(one_dim_names))])
-        return str(out)
-
-    @overrides
-    def repr_with_sampling_errors(self):
-        # Table example:
-        #         mean   se_mean       sd       10%      90%
-        # mu  7.751103 0.1113406 5.199004 1.3286256 14.03575
-        # tau 6.806410 0.1785522 6.044944 0.9572097 14.48271
-        out = self.method_name() + "\n"
-
-        out += self.formatted_runtime() + "\n"
-
-        table = prettytable.PrettyTable()
-        table.field_names = ["Parameter", "index", "mu", "sigma", "10%", "90%"]
-        for par in self.user_parameters:
-            dims = self.get_parameter_shape(par)
-            if len(dims) == 0:
-                par_name = par
-                par_value = self.get_parameter_estimate(par_name)
-                ci = par_value.get_CI(0.8)
-                table.add_row([par_name, "", str(par_value.estimateMean()), str(par_value.estimateSE()),
-                               str(ci.pretty_lower), str(ci.pretty_upper)])
-            else:
-                max_idx = math.prod(dims)
-                idx = [0 for _ in dims]
-                i = 0
-                par_txt = par
-                while i < max_idx:
-                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
-                    par_name = f"{par}{idx_txt}"
-                    par_value = self.get_parameter_estimate(par_name)
-                    ci = par_value.get_CI(0.8)
-                    table.add_row([par_txt, idx_txt, str(par_value.estimateMean()), str(par_value.estimateSE()),
-                                   str(ci.pretty_lower), str(ci.pretty_upper)])
-                    par_txt = ""
-                    i += 1
-                    idx[-1] += 1
-                    for j in range(len(dims) - 1, 0, -1):
-                        if idx[j] >= dims[j]:
-                            idx[j] = 0
-                            idx[j - 1] += 1
-
-        return out + str(table)
-
+    @property
     @overrides
     def method_name(self) -> str:
         if self.result_type == StanResultEngine.NONE:
@@ -322,61 +263,7 @@ class InferenceResult(IInferenceResult):
         elif self.result_type == StanResultEngine.MCMC:
             return f"MCMC algorithm {self._result.metadata.cmdstan_config['algorithm']}, engine {self._result.metadata.cmdstan_config['engine']}"
 
-    @overrides
-    def repr_without_sampling_errors(self):
-        # Table example:
-        #        value        10%      90%
-        # mu  7.751103  1.3286256 14.03575
-        # tau 6.806410  0.9572097 14.48271
-        out = self.method_name() + "\n"
 
-        out += self.formatted_runtime() + "\n"
-
-        table = prettytable.PrettyTable()
-        table.field_names = ["Parameter", "index", "value", "10%", "90%"]
-        for par in self.user_parameters:
-            dims = self.get_parameter_shape(par)
-            if len(dims) == 0:
-                par_name = par
-                par_value = self.get_parameter_estimate(par_name)
-                ci = par_value.get_CI(0.8)
-                table.add_row([par_name, "", str(par_value),
-                               str(ci.pretty_lower), str(ci.pretty_upper)])
-            else:
-                max_idx = math.prod(dims)
-                idx = [0 for _ in dims]
-                i = 0
-                par_txt = par
-                while i < max_idx:
-                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
-                    par_name = f"{par}{idx_txt}"
-                    par_value = self.get_parameter_estimate(par_name)
-                    ci = par_value.get_CI(0.8)
-                    table.add_row([par_txt, idx_txt, str(par_value),
-                                   str(ci.pretty_lower), str(ci.pretty_upper)])
-                    par_txt = ""
-                    i += 1
-                    idx[-1] += 1
-                    for j in range(len(dims) - 1, 0, -1):
-                        if idx[j] >= dims[j]:
-                            idx[j] = 0
-                            idx[j - 1] += 1
-
-        return out + str(table)
-
-    @overrides
-    def formatted_runtime(self) -> str:
-        if self._runtime is None:
-            return "Run time: not available"
-        else:
-            return f"Run taken: {humanize.precisedelta(self._runtime)}"
-
-    @overrides
-    def __repr__(self):
-        if self.sample_count is None:
-            return self.repr_without_sampling_errors()
-        else:
-            return self.repr_with_sampling_errors()
 
     @overrides
     def all_main_effects(self) -> dict[str, ValueWithError]:
@@ -386,29 +273,31 @@ class InferenceResult(IInferenceResult):
         return out
 
     def serialize_to_dict(self, output_type: str):
+        ans_dict = {"runtime": self._runtime.total_seconds(), "messages": self._messages}
+
         if output_type == "main_effects":
             ans = self.all_main_effects()
-            ans_dict = {key: {"value": ans[key].value, "error": ans[key].SE, "N": ans[key].N} for key in ans}
+            ans_dict += {key: {"value": ans[key].value, "SE": ans[key].SE, "N": ans[key].N} for key in ans}
             return {"main_effects": ans_dict}
         if output_type == "covariances":
             means = self._result.stan_variables()
             cov_matrix, one_dim_names = self.get_cov_matrix()
-            out = {}
-            out["cov"] = cov_matrix.tolist()
-            out["names"] = one_dim_names
-            out["means"] = means
-            return {"covariances": out}
+            ans_dict["cov"] = cov_matrix.tolist()
+            ans_dict["names"] = one_dim_names
+            ans_dict["means"] = means
+            ans_dict["N"] = [self.sample_count(name) for name in one_dim_names]
+            return {"covariances": ans_dict}
         if output_type == "draws":
-            out = {}
-            out["draws"] = self.draws.tolist()
-            out["names"] = self.onedim_parameters
-            return {"draws": out}
+            ans_dict["draws"] = self.draws.tolist()
+            ans_dict["names"] = self.onedim_parameters
+            return {"draws": ans_dict}
         if output_type == "raw":
             file = self.serialize()
             # Encode file as base64
             with open(file, "rb") as f:
                 data = f.read()
-                return {"raw": base64.b64encode(data).decode("utf-8")}
+                ans_dict["raw"] = base64.b64encode(data).decode("utf-8")
+                return {"raw": ans_dict}
 
         raise ValueError("Unknown output type")
 

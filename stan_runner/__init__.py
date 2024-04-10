@@ -11,3 +11,4 @@ from .hatchet_client import post_model_to_server, RemoteStanRunner
 from .hatchet_utils import register_server, get_hatchet
 # print("Loading ifaces...")
 from .ifaces import StanOutputScope, StanErrorType, StanResultEngine
+from .utils import  infer_param_shapes

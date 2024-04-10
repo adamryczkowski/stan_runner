@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from datetime import timedelta
@@ -5,8 +6,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import humanize
 import numpy as np
-from ValueWithError import ValueWithError
+import prettytable
+from ValueWithError import IValueWithError
 from cmdstanpy import CmdStanMCMC
 
 
@@ -22,6 +25,19 @@ class StanResultEngine(Enum):
     VB = 2
     MCMC = 3
     PATHFINDER = 4
+
+    @staticmethod
+    def from_str(value: str) -> StanResultEngine:
+        if value == "laplace":
+            return StanResultEngine.LAPLACE
+        elif value == "vb":
+            return StanResultEngine.VB
+        elif value == "mcmc":
+            return StanResultEngine.MCMC
+        elif value == "pathfinder":
+            return StanResultEngine.PATHFINDER
+        else:
+            raise ValueError(f"Unknown StanResultEngine: {value}")
 
 
 class StanOutputScope(Enum):
@@ -91,17 +107,17 @@ class IInferenceResult(ABC):
                             idx[j - 1] += 1
 
     @property
-    @abstractmethod
     def is_error(self) -> bool:
-        ...
+        return "error" in self._messages
 
-    @abstractmethod
+    @property
+    def one_dim_parameters_count(self) -> int:
+        self._make_dict()
+        return len(self.onedim_parameters)
+
     def get_onedim_parameter_names(self, user_parameter_name: str) -> list[str]:
-        ...
-
-    @abstractmethod
-    def get_onedim_parameter_index(self, onedim_parameter_name: str) -> int:
-        ...
+        self._make_dict()
+        return self._user2onedim[user_parameter_name]
 
     @property
     @abstractmethod
@@ -118,14 +134,14 @@ class IInferenceResult(ABC):
         ...
 
     @property
-    @abstractmethod
     def user_parameters(self) -> list[str]:
-        ...
+        self._make_dict()
+        return list(self._user2onedim.keys())
 
     @property
-    @abstractmethod
     def onedim_parameters(self) -> list[str]:
-        ...
+        self._make_dict()
+        return [item for sublist in self._user2onedim.values() for item in sublist]
 
     @abstractmethod
     def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
@@ -141,7 +157,7 @@ class IInferenceResult(ABC):
         ...
 
     @abstractmethod
-    def get_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> ValueWithError:
+    def get_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> IValueWithError:
         ...
 
     @abstractmethod
@@ -154,34 +170,144 @@ class IInferenceResult(ABC):
 
     @abstractmethod
     def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
-        ...
+        if user_parameter_names is None:
+            user_parameter_names = self.onedim_parameters
+        elif isinstance(user_parameter_names, str):
+            user_parameter_names = [user_parameter_names]
 
-    @abstractmethod
+        onedim_parameter_names = [self.get_onedim_parameter_names(key) for key in user_parameter_names]
+        onedim_parameter_names = [name for sublist in onedim_parameter_names for name in sublist]
+
+        cov_matrix = np.zeros((len(onedim_parameter_names), len(onedim_parameter_names)))
+
+        for i, name1 in enumerate(onedim_parameter_names):
+            for j, name2 in enumerate(onedim_parameter_names):
+                cov_matrix[i, j] = self.get_cov(name1, name2)
+
+        return cov_matrix, onedim_parameter_names
+
     def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
-        ...
+        cov_matrix, one_dim_names = self.get_cov_matrix(user_parameter_names)
+        out = prettytable.PrettyTable()
+        out.field_names = [""] + one_dim_names
 
-    @abstractmethod
+        # Calculate the smallest standard error of variances
+        factor = np.sqrt(0.5 / (self.sample_count() - 1))
+        se = np.sqrt(min(np.diag(cov_matrix))) * factor
+        digits = int(np.ceil(-np.log10(se))) + 1
+
+        cov_matrix_txt = np.round(cov_matrix, digits)
+
+        for i in range(len(one_dim_names)):
+            # Suppres scientific notation
+            out.add_row([one_dim_names[i]] + [f"{cov_matrix_txt[i, j]:.4f}" for j in range(len(one_dim_names))])
+        return str(out)
+
     def repr_with_sampling_errors(self):
-        ...
+        # Table example:
+        #         mean   se_mean       sd       10%      90%
+        # mu  7.751103 0.1113406 5.199004 1.3286256 14.03575
+        # tau 6.806410 0.1785522 6.044944 0.9572097 14.48271
+        out = self.method_name + "\n"
 
+        out += self.formatted_runtime() + "\n"
+
+        table = prettytable.PrettyTable()
+        table.field_names = ["Parameter", "index", "mu", "sigma", "10%", "90%"]
+        for par in self.user_parameters:
+            dims = self.get_parameter_shape(par)
+            if len(dims) == 0:
+                par_name = par
+                par_value = self.get_parameter_estimate(par_name)
+                ci = par_value.get_CI(0.8)
+                table.add_row([par_name, "", str(par_value.estimateMean()), str(par_value.estimateSE()),
+                               str(ci.pretty_lower), str(ci.pretty_upper)])
+            else:
+                max_idx = math.prod(dims)
+                idx = [0 for _ in dims]
+                i = 0
+                par_txt = par
+                while i < max_idx:
+                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
+                    par_name = f"{par}{idx_txt}"
+                    par_value = self.get_parameter_estimate(par_name)
+                    ci = par_value.get_CI(0.8)
+                    table.add_row([par_txt, idx_txt, str(par_value.estimateMean()), str(par_value.estimateSE()),
+                                   str(ci.pretty_lower), str(ci.pretty_upper)])
+                    par_txt = ""
+                    i += 1
+                    idx[-1] += 1
+                    for j in range(len(dims) - 1, 0, -1):
+                        if idx[j] >= dims[j]:
+                            idx[j] = 0
+                            idx[j - 1] += 1
+
+        return out + str(table)
+
+    @property
     @abstractmethod
     def method_name(self) -> str:
         ...
 
-    @abstractmethod
     def repr_without_sampling_errors(self):
-        ...
+        # Table example:
+        #        value        10%      90%
+        # mu  7.751103  1.3286256 14.03575
+        # tau 6.806410  0.9572097 14.48271
+        out = self.method_name + "\n"
 
-    @abstractmethod
+        out += self.formatted_runtime() + "\n"
+
+        table = prettytable.PrettyTable()
+        table.field_names = ["Parameter", "index", "value", "10%", "90%"]
+        for par in self.user_parameters:
+            dims = self.get_parameter_shape(par)
+            if len(dims) == 0:
+                par_name = par
+                par_value = self.get_parameter_estimate(par_name)
+                ci = par_value.get_CI(0.8)
+                table.add_row([par_name, "", str(par_value),
+                               str(ci.pretty_lower), str(ci.pretty_upper)])
+            else:
+                max_idx = math.prod(dims)
+                idx = [0 for _ in dims]
+                i = 0
+                par_txt = par
+                while i < max_idx:
+                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
+                    par_name = f"{par}{idx_txt}"
+                    par_value = self.get_parameter_estimate(par_name)
+                    ci = par_value.get_CI(0.8)
+                    table.add_row([par_txt, idx_txt, str(par_value),
+                                   str(ci.pretty_lower), str(ci.pretty_upper)])
+                    par_txt = ""
+                    i += 1
+                    idx[-1] += 1
+                    for j in range(len(dims) - 1, 0, -1):
+                        if idx[j] >= dims[j]:
+                            idx[j] = 0
+                            idx[j - 1] += 1
+
+        return out + str(table)
+
     def formatted_runtime(self) -> str:
+        if self._runtime is None:
+            return "Run time: not available"
+        else:
+            return f"Run taken: {humanize.precisedelta(self._runtime)}"
+
+    def __repr__(self):
+        if self.sample_count is None:
+            return self.repr_without_sampling_errors()
+        else:
+            return self.repr_with_sampling_errors()
+
+    @abstractmethod
+    def all_main_effects(self) -> dict[str, IValueWithError]:
         ...
 
     @abstractmethod
-    def __repr__(self) -> str:
-        ...
-
-    @abstractmethod
-    def all_main_effects(self) -> dict[str, ValueWithError]:
+    def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
         ...
 
 
