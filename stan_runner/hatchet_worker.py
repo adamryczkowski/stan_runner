@@ -79,7 +79,10 @@ def register_worker(server_address: str = "192.168.42.5:7077", server_token: str
                 if args_key in data_dict:
                     print(f"Running {prefix}")
                     result: InferenceResult = fn(**data_dict[args_key])
-                    output[prefix] = result.serialize_to_dict(output_type)
+                    if result is not None:
+                        output[prefix] = result.serialize_to_dict(output_type)
+                    else:
+                        print(f"Result unavailable: {data_dict[args_key]}")
 
             return {"result": output}
 

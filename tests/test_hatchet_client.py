@@ -11,8 +11,8 @@ from cmdstanpy.stanfit.vb import CmdStanVB
 from cmdstanpy.stanfit.vb import RunSet
 
 from stan_runner import *
-register_server()
 
+register_server()
 
 
 def model_pars() -> dict:
@@ -107,7 +107,7 @@ def make_model() -> CmdStanRunner:
 
 def make_remote_model() -> RemoteStanRunner:
     model_str, data_dict = model_generator_cov(nrow=10000)
-    runner = RemoteStanRunner("http://localhost:37184", output_type=StanOutputScope.MainEffects)
+    runner = RemoteStanRunner("http://localhost:37184", output_type=StanOutputScope.FullSamples)
     runner.load_model_by_str(model_str, "cov_model")
     assert runner.is_model_loaded
     runner.load_data_by_dict(data_dict)
@@ -150,12 +150,17 @@ def test1():
 
 def test2():
     runner = make_remote_model()
-    runner.schedule_laplace_sample()
+    # runner.schedule_laplace_sample()
+    runner.schedule_pathfinder()
+    # runner.schedule_variational_bayes(algorithm="fullrank")
+    runner.schedule_sampling(4, 500)
+
     delayed_result = runner.run()
     print(delayed_result.is_computed)
     print(delayed_result)
     ans = delayed_result.wait()
     print(ans)
+
 
 if __name__ == '__main__':
     test2()

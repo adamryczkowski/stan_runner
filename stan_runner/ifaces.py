@@ -32,7 +32,7 @@ class StanResultEngine(Enum):
             return StanResultEngine.LAPLACE
         elif value == "vb":
             return StanResultEngine.VB
-        elif value == "mcmc":
+        elif value == "sampling":
             return StanResultEngine.MCMC
         elif value == "pathfinder":
             return StanResultEngine.PATHFINDER
@@ -151,9 +151,8 @@ class IInferenceResult(ABC):
     def sample_count(self, onedim_parameter_name: str = None) -> float | int | None:
         ...
 
-    @property
     @abstractmethod
-    def draws(self) -> np.ndarray:
+    def draws(self, incl_raw: bool = True) -> np.ndarray:
         ...
 
     @abstractmethod
@@ -216,7 +215,7 @@ class IInferenceResult(ABC):
         table.field_names = ["Parameter", "index", "mu", "sigma", "10%", "90%"]
         for par in self.user_parameters:
             dims = self.get_parameter_shape(par)
-            if len(dims) == 0:
+            if len(dims) == 0 or (len(dims) == 1 and dims[0] == 1):
                 par_name = par
                 par_value = self.get_parameter_estimate(par_name)
                 ci = par_value.get_CI(0.8)

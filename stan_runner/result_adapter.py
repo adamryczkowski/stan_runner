@@ -18,6 +18,7 @@ from cmdstanpy.cmdstan_args import CmdStanArgs
 from cmdstanpy.stanfit.vb import RunSet
 from overrides import overrides
 
+from .utils import make_dict_serializable
 from .ifaces import IInferenceResult, StanResultEngine, StanOutputScope
 
 _fallback = json._default_encoder.default
@@ -163,23 +164,22 @@ class InferenceResult(IInferenceResult):
         if self._result is None:
             raise ValueError("No result available")
         elif self.result_type == StanResultEngine.LAPLACE:
-            return self.draws.shape[0]
+            return self.draws(False).shape[0]
         elif self.result_type == StanResultEngine.VB:
-            return self.draws.shape[0]
+            return self.draws(False).shape[0]
         elif self.result_type == StanResultEngine.MCMC:
             if onedim_parameter_name is not None:
                 s = self._result.summary()
                 return s["N_Eff"][onedim_parameter_name]
             else:
-                return self.draws.shape[0]
+                return self.draws(False).shape[0]
         elif self.result_type == StanResultEngine.PATHFINDER:
-            return self.draws.shape[0]
+            return self.draws(False).shape[0]
         else:
             raise ValueError("Unknown result type")
 
-    @property
     @overrides
-    def draws(self) -> np.ndarray:
+    def draws(self, incl_raw:bool=True) -> np.ndarray:
         if self._draws is None:
             if self._result is None:
                 raise ValueError("No result available")
@@ -191,6 +191,17 @@ class InferenceResult(IInferenceResult):
                 self._draws = self._result.draws(concat_chains=True)
             elif self.result_type == StanResultEngine.PATHFINDER:
                 self._draws = self._result.draws()
+
+        if not incl_raw:
+            if self.result_type == StanResultEngine.LAPLACE:
+                return self._draws[:, 2:]
+            elif self.result_type == StanResultEngine.VB:
+                return self._draws[:, 3:]
+            elif self.result_type == StanResultEngine.MCMC:
+                return self._draws[:, 7:]
+            elif self.result_type == StanResultEngine.PATHFINDER:
+                return self._draws[:, 2:]
+
         return self._draws
 
     @overrides
@@ -199,9 +210,9 @@ class InferenceResult(IInferenceResult):
             raise ValueError("No result available")
         var_index = self._result.column_names.index(onedim_parameter_name)
         if store_values:
-            ans = ValueWithErrorVec(self.draws[:, var_index])
+            ans = ValueWithErrorVec(self.draws(False)[:, var_index])
         else:
-            ans = ValueWithError.CreateFromVector(self.draws[:, var_index], N=self.sample_count(onedim_parameter_name))
+            ans = ValueWithError.CreateFromVector(self.draws(False)[:, var_index], N=self.sample_count(onedim_parameter_name))
         return ans
 
     @overrides
@@ -243,11 +254,20 @@ class InferenceResult(IInferenceResult):
 
             indices = [self.get_onedim_parameter_index(name) for name in one_dim_names]
 
-            return np.cov(self.draws[:, indices], rowvar=False), one_dim_names
+            return np.cov(self.draws(False)[:, indices], rowvar=False), one_dim_names
         else:
             raise ValueError("Unknown result type")
 
-
+    @overrides
+    def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
+        if self._result is None:
+            raise ValueError("No result available")
+        elif self.result_type != StanResultEngine.NONE:
+            index1 = self.get_onedim_parameter_index(one_dim_par1)
+            index2 = self.get_onedim_parameter_index(one_dim_par2)
+            return np.cov(self.draws(False)[:, [index1, index2]], rowvar=False)[0, 1]
+        else:
+            raise ValueError("Unknown result type")
 
     @property
     @overrides
@@ -263,8 +283,6 @@ class InferenceResult(IInferenceResult):
         elif self.result_type == StanResultEngine.MCMC:
             return f"MCMC algorithm {self._result.metadata.cmdstan_config['algorithm']}, engine {self._result.metadata.cmdstan_config['engine']}"
 
-
-
     @overrides
     def all_main_effects(self) -> dict[str, ValueWithError]:
         out = {}
@@ -273,24 +291,30 @@ class InferenceResult(IInferenceResult):
         return out
 
     def serialize_to_dict(self, output_type: str):
-        ans_dict = {"runtime": self._runtime.total_seconds(), "messages": self._messages}
+        if self._runtime is None:
+            total_seconds = -1
+        else:
+            total_seconds = self._runtime.total_seconds()
+        ans_dict = {"runtime": total_seconds, "messages": self._messages}
+        ans_dict["method_name"] = self.method_name
 
         if output_type == "main_effects":
             ans = self.all_main_effects()
-            ans_dict += {key: {"value": ans[key].value, "SE": ans[key].SE, "N": ans[key].N} for key in ans}
+            ans_dict["vars"] = {key: {"value": ans[key].value, "SE": ans[key].SE, "N": ans[key].N} for key in ans}
+            ans_dict["sample_count"] = self.sample_count()
             return {"main_effects": ans_dict}
         if output_type == "covariances":
-            means = self._result.stan_variables()
+            means = {key: np.mean(values) for key, values in self._result.stan_variables().items()}
             cov_matrix, one_dim_names = self.get_cov_matrix()
             ans_dict["cov"] = cov_matrix.tolist()
             ans_dict["names"] = one_dim_names
             ans_dict["means"] = means
             ans_dict["N"] = [self.sample_count(name) for name in one_dim_names]
-            return {"covariances": ans_dict}
+            return {"covariances": make_dict_serializable(ans_dict)}
         if output_type == "draws":
-            ans_dict["draws"] = self.draws.tolist()
+            ans_dict["draws"] = self.draws(False).tolist()
             ans_dict["names"] = self.onedim_parameters
-            return {"draws": ans_dict}
+            return {"draws": make_dict_serializable(ans_dict)}
         if output_type == "raw":
             file = self.serialize()
             # Encode file as base64

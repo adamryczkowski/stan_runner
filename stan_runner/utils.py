@@ -1,6 +1,7 @@
 from hashlib import sha256
 from pathlib import Path
 from math import prod
+import numpy as np
 
 def find_model_in_cache(model_cache: Path, model_name: str, model_hash: str) -> Path:
     best_model_filename = None
@@ -86,3 +87,13 @@ def infer_param_shapes(one_dim_names: list[str]) -> tuple[dict[str, tuple[int, .
         ans_dict[old_base_name] = name_list
 
     return ans_dims, ans_dict
+
+
+def make_dict_serializable(d: dict) -> dict:
+    """Turns all numpy arrays in the dictionary into lists"""
+    for key in d:
+        if isinstance(d[key], dict):
+            d[key] = make_dict_serializable(d[key])
+        elif isinstance(d[key], np.ndarray):
+            d[key] = d[key].tolist()
+    return d

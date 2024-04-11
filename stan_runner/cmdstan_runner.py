@@ -20,9 +20,9 @@ from .utils import find_model_in_cache
 from overrides import overrides
 
 import json
-_fallback = json._default_encoder.default
-json._default_encoder.default = lambda obj: getattr(obj.__class__,  "to_json", _fallback)(obj)
 
+_fallback = json._default_encoder.default
+json._default_encoder.default = lambda obj: getattr(obj.__class__, "to_json", _fallback)(obj)
 
 stan_CI_levels_dict = {0: 0.95, 1: 0.9, 2: 0.8, 3: 0.5}
 
