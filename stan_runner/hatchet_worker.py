@@ -23,6 +23,7 @@ def register_worker(server_address: str = "192.168.42.5:7077", server_token: str
             # Set model cache to tests/model_cache relative to the repo's root
             model_cache = os.path.join(os.path.dirname(__file__), "model_cache")
             self._runner = CmdStanRunner(Path(model_cache))
+            self._runner.install_dependencies()
 
         def common(self, context: Context):
             print("Loading model")

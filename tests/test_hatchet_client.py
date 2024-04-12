@@ -29,7 +29,7 @@ model {
 }
 generated quantities {
   real par3;
-  par3 = par + 1;
+  par3 = par + 2;
 }
 """,
         "model_name": "test_model",
@@ -71,7 +71,7 @@ model {
    mu1 ~ normal(0, 1);
    mu2 ~ normal(0, 1);
    sigma ~ cauchy(0, 1);
-   rows ~ normal(mu1+mu2, sigma);
+   rows ~ normal(mu1+mu2+1, sigma);
 }
 """
 
