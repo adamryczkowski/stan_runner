@@ -17,7 +17,7 @@ hatchet = {version = "^1.4.0", optional = true}
 invoke = "^2.2.0"
 requests = "^2.31.0"
 fabric = {version  = "^3.2.2", optional = false}
-valuewitherror = {path = "../ValueWithError"}
+valuewitherror = {git = "https://github.com/adamryczkowski/ValueWithError.git", branch = "main"}
 prettytable = "^3.10.0"
 scipy = "^1.12.0"
 cmdstanpy = {version = "^1.2.2", extras = ["all"]} #, git = "https://github.com/stan-dev/cmdstanpy", branch = "develop"}
