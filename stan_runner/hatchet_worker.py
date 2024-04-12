@@ -15,7 +15,7 @@ def register_worker(server_address: str = "192.168.42.5:7077", server_token: str
     register_server(server_address, server_token)
     hatchet = Hatchet()
 
-    @hatchet.workflow(on_events=["simple:create"])
+    @hatchet.workflow(on_events=["simple:create"], schedule_timeout="1h")
     class Hatchet_StanRunner:
         _runner: CmdStanRunner
 

@@ -167,7 +167,6 @@ class IInferenceResult(ABC):
     def get_parameter_sigma(self, user_parameter_name: str) -> np.ndarray:
         ...
 
-    @abstractmethod
     def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
         if user_parameter_names is None:
             user_parameter_names = self.onedim_parameters

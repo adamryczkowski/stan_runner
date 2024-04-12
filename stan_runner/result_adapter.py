@@ -38,6 +38,8 @@ class InferenceResult(IInferenceResult):
             assert isinstance(result, (CmdStanLaplace, CmdStanVB, CmdStanMCMC, CmdStanPathfinder))
             assert isinstance(messages, dict)
 
+        assert result is not None
+
         self._result = result
         self._draws = None
         self._messages = messages
@@ -210,9 +212,9 @@ class InferenceResult(IInferenceResult):
             raise ValueError("No result available")
         var_index = self._result.column_names.index(onedim_parameter_name)
         if store_values:
-            ans = ValueWithErrorVec(self.draws(False)[:, var_index])
+            ans = ValueWithErrorVec(self.draws(True)[:, var_index])
         else:
-            ans = ValueWithError.CreateFromVector(self.draws(False)[:, var_index], N=self.sample_count(onedim_parameter_name))
+            ans = ValueWithError.CreateFromVector(self.draws(True)[:, var_index], N=self.sample_count(onedim_parameter_name))
         return ans
 
     @overrides
@@ -254,7 +256,7 @@ class InferenceResult(IInferenceResult):
 
             indices = [self.get_onedim_parameter_index(name) for name in one_dim_names]
 
-            return np.cov(self.draws(False)[:, indices], rowvar=False), one_dim_names
+            return np.cov(self.draws(True)[:, indices], rowvar=False), one_dim_names
         else:
             raise ValueError("Unknown result type")
 
@@ -310,6 +312,7 @@ class InferenceResult(IInferenceResult):
             ans_dict["names"] = one_dim_names
             ans_dict["means"] = means
             ans_dict["N"] = [self.sample_count(name) for name in one_dim_names]
+            ans_dict["sample_count"] = self.sample_count()
             return {"covariances": make_dict_serializable(ans_dict)}
         if output_type == "draws":
             ans_dict["draws"] = self.draws(False).tolist()
@@ -332,22 +335,31 @@ class InferenceResult(IInferenceResult):
 
     def serialize(self) -> Path:
         """Serializes the method into a single file that is readable."""
-        rs: RunSet = self._result._runset
+        try:
+            rs: RunSet = self._result.runset
+        except AttributeError:
+            try:
+                rs = self._result._runset
+            except AttributeError:
+                raise ValueError("No result available")
+
 
         a: CmdStanArgs = rs._args
         output_dir = Path("/") / a.output_dir
         obj = {"runset": rs, "messages": self._messages, "runtime": self._runtime}
+        if self.result_type == StanResultEngine.LAPLACE:
+            obj["laplace_mode"] = self._result.mode
         pickle.dump(obj, open(output_dir / "runset.pkl", "wb"))
 
         # Compress the output directory
-        zip_file = output_dir.parent / (output_dir.name + ".zip")
-        shutil.make_archive(str(output_dir), 'zip', zip_file)
-        return zip_file
+        zip_file = output_dir.parent / output_dir.name
+        zip_file = shutil.make_archive(str(output_dir), 'zip', zip_file)
+        return Path(zip_file)
 
     @staticmethod
     def DeserializeFromString(raw_str: str) -> InferenceResult:
         # Decode the base64 string into temp zip file.
-        zip_path = Path(tempfile.TemporaryDirectory().name)
+        zip_path = Path(tempfile.TemporaryDirectory().name + ".zip")
         with open(zip_path, "wb") as f:
             f.write(base64.b64decode(raw_str))
 
@@ -380,7 +392,7 @@ class InferenceResult(IInferenceResult):
         elif rs2._args.method.name == "VARIATIONAL":
             stanObj = CmdStanVB(rs2)
         elif rs2._args.method.name == "LAPLACE":
-            stanObj = CmdStanLaplace(rs2)
+            stanObj = CmdStanLaplace(rs2, mode=obj["laplace_mode"])
         elif rs2._args.method.name == "PATHFINDER":
             stanObj = CmdStanPathfinder(rs2)
         else:
@@ -389,6 +401,6 @@ class InferenceResult(IInferenceResult):
         output = InferenceResult(stanObj, messages=obj["messages"], runtime=obj["runtime"])
 
         if bDeleteAfterwards:
-            shutil.rmtree(zip_path)
+            zip_path.unlink()
 
         return output

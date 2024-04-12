@@ -105,9 +105,9 @@ def make_model() -> CmdStanRunner:
     return runner
 
 
-def make_remote_model() -> RemoteStanRunner:
+def make_remote_model(output_type: StanOutputScope) -> RemoteStanRunner:
     model_str, data_dict = model_generator_cov(nrow=10000)
-    runner = RemoteStanRunner("http://localhost:37184", output_type=StanOutputScope.FullSamples)
+    runner = RemoteStanRunner("http://localhost:37184", output_type=output_type)
     runner.load_model_by_str(model_str, "cov_model")
     assert runner.is_model_loaded
     runner.load_data_by_dict(data_dict)
@@ -148,19 +148,51 @@ def test1():
     print(bayes2)
 
 
-def test2():
-    runner = make_remote_model()
-    # runner.schedule_laplace_sample()
+def test_remote_run(output_type: StanOutputScope):
+    runner = make_remote_model(output_type)
+    runner.schedule_laplace_sample()
     runner.schedule_pathfinder()
-    # runner.schedule_variational_bayes(algorithm="fullrank")
+    runner.schedule_variational_bayes(algorithm="fullrank")
     runner.schedule_sampling(4, 500)
 
     delayed_result = runner.run()
-    print(delayed_result.is_computed)
-    print(delayed_result)
     ans = delayed_result.wait()
+    flattened_ans = [(f"{key1} {key2}", item) for key2, items in ans.items() for key1, item in items.items()]
     print(ans)
+    if output_type != StanOutputScope.MainEffects:
+        for key, item in flattened_ans:
+            print(f"{key}: {item.pretty_cov_matrix()}")
+
+
+def test2():
+    print("Testing MainEffects output...")
+    test_remote_run(StanOutputScope.MainEffects)
+
+    print("Testing Covariance output...")
+    test_remote_run(StanOutputScope.Covariances)
+
+    print("Testing Full output...")
+    test_remote_run(StanOutputScope.FullSamples)
+
+    print("Testing Raw output...")
+    test_remote_run(StanOutputScope.RawOutput)
+
+def test3(output_type: StanOutputScope):
+    runner = make_remote_model(output_type)
+    runner.schedule_laplace_sample()
+    # runner.schedule_pathfinder()
+    # runner.schedule_variational_bayes(algorithm="fullrank")
+    # runner.schedule_sampling(4, 500)
+
+    delayed_result = runner.run()
+    ans = delayed_result.wait()
+    flattened_ans = [(f"{key1} {key2}", item) for key2, items in ans.items() for key1, item in items.items()]
+    print(ans)
+    if output_type != StanOutputScope.MainEffects:
+        for key, item in flattened_ans:
+            print(f"{key}: {item.pretty_cov_matrix()}")
 
 
 if __name__ == '__main__':
     test2()
+    # test3(StanOutputScope.FullSamples)

@@ -259,8 +259,10 @@ class DelayedInferenceResult:
             # print(event)
             payload = event.payload
             # event.payload
-            if event.type == "STEP_RUN_EVENT_TYPE_FAILED":
-                raise ValueError("Failed")
+            if event.type == "STEP_RUN_EVENT_TYPE_STARTED":
+                print(f"Task {self._messageID} started")
+            elif payload is None:
+                print(f"Step run probably failed: {event.type}")
 
             if payload is not None:
                 assert isinstance(payload, dict)
@@ -272,10 +274,11 @@ class DelayedInferenceResult:
                     assert isinstance(payload, dict)
                     assert len(payload) == 1
                     for key, arg_dict in payload.items():
+                        print(f"Got payload {key} {alg_key}")
                         arg_dict["runtime"] = timedelta(seconds=arg_dict["runtime"]) if "runtime" in arg_dict else None
                         arg_dict["result_type"] = result_type
                         if key == "raw":
-                            obj = InferenceResult.DeserializeFromString(**arg_dict)
+                            obj = InferenceResult.DeserializeFromString(raw_str=arg_dict["raw"])
                         elif key == "draws":
                             obj = InferenceResultFullSamples(**arg_dict)
                         elif key == "covariances":
@@ -418,7 +421,15 @@ class InferenceResultMainEffects(IInferenceResult):
 
     @overrides
     def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
-        raise NotImplementedError
+        if user_parameter_names is None:
+            user_parameter_names = self.onedim_parameters
+
+        onedim_parameter_names = [name for user_name in user_parameter_names for name in
+                                  self.get_onedim_parameter_names(user_name)]
+        cov_matrix = np.asarray(
+            [[self.get_cov(one_dim_par1, one_dim_par2) for one_dim_par1 in onedim_parameter_names] for
+             one_dim_par2 in onedim_parameter_names])
+        return cov_matrix, onedim_parameter_names
 
     @property
     @overrides
@@ -436,6 +447,7 @@ class InferenceResultMainEffects(IInferenceResult):
 
 class InferenceResultCovariances(InferenceResultMainEffects):
     _covariance: np.ndarray
+    _idx2name: list[str]
 
     def __init__(self, names: list[str], cov: list[list[float]], means: dict[str, float], N: list[float | int],
                  runtime: timedelta | None, messages: dict[str, str], result_type: StanResultEngine,
@@ -457,13 +469,15 @@ class InferenceResultCovariances(InferenceResultMainEffects):
         super().__init__(vars=super_vars, user2onedim=user2onedim, param_shapes=param_shapes,
                          messages=messages, runtime=runtime, result_type=result_type,
                          method_name=method_name, sample_count=sample_count)
+        self._covariance = cov
+        self._idx2name = names
 
     @overrides
     def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
         assert one_dim_par1 in self._vars
         assert one_dim_par2 in self._vars
 
-        return self._covariance[one_dim_par1, one_dim_par2]
+        return self._covariance[self._idx2name.index(one_dim_par1), self._idx2name.index(one_dim_par2)]
 
     @property
     @overrides
@@ -499,8 +513,8 @@ class InferenceResultFullSamples(InferenceResultMainEffects):
     @overrides
     def draws(self, incl_raw: bool = True) -> np.ndarray:
         onedim_varnames = self.onedim_parameters
-        ans = np.array([self._vars[name].vector for name in onedim_varnames])
-        ans.dtype.names = onedim_varnames
+        ans = np.asarray([self._vars[name].vector for name in onedim_varnames])
+        # ans.dtype.names = onedim_varnames
         return ans
 
     @overrides
@@ -510,8 +524,10 @@ class InferenceResultFullSamples(InferenceResultMainEffects):
 
         onedim_parameter_names = [name for user_name in user_parameter_names for name in
                                   self.get_onedim_parameter_names(user_name)]
-        cov_matrix = np.array(
-            [[np.cov(self._vars[name].vector, self._vars[name2].vector) for name in onedim_parameter_names] for name2 in
+
+        cov_matrix = np.asarray(
+            [[np.cov(self._vars[name].vector, self._vars[name2].vector)[0, 0] for name in onedim_parameter_names] for
+             name2 in
              onedim_parameter_names])
         return cov_matrix, onedim_parameter_names
 
