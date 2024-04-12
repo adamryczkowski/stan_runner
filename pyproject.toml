@@ -24,6 +24,7 @@ cmdstanpy = {version = "^1.2.2", extras = ["all"]} #, git = "https://github.com/
 humanize = "^4.9.0"
 hatchet-sdk = "^0.18.0"
 load-dotenv = "^0.1.0"
+jsonpickle = "^3.0.4"
 
 [tool.poetry.extras]
 hatchet = ["hatchet"]

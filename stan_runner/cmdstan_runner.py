@@ -1,10 +1,10 @@
 import hashlib
 import io
+import json
 import subprocess
 import tempfile
 from _datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
-from json import JSONEncoder
 from multiprocessing import cpu_count
 from pathlib import Path
 from subprocess import run
@@ -13,13 +13,11 @@ from typing import Any, Optional
 import cmdstanpy
 import jsonpickle
 import numpy as np
+from overrides import overrides
 
 from .ifaces import StanErrorType, IStanRunner, IInferenceResult
 from .result_adapter import InferenceResult
 from .utils import find_model_in_cache
-from overrides import overrides
-
-import json
 
 _fallback = json._default_encoder.default
 json._default_encoder.default = lambda obj: getattr(obj.__class__, "to_json", _fallback)(obj)
