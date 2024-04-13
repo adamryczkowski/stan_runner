@@ -92,7 +92,7 @@ def register_worker(server_address: str = "192.168.42.5:7077", server_token: str
                 import traceback
                 return {"call_stack": traceback.format_exc(), "error": str(e)}
 
-    worker = hatchet.worker(worker_name, max_runs=8)
+    worker = hatchet.worker(worker_name, max_runs=1)
     worker.register_workflow(Hatchet_StanRunner())
 
     return worker
