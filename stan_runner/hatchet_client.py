@@ -263,10 +263,17 @@ class DelayedInferenceResult:
                 print(f"Task {self._messageID} started")
             elif payload is None:
                 print(f"Step run probably failed: {event.type}")
+                if event.type == StepRunEventType.STEP_RUN_EVENT_TYPE_FAILED:
+                    return None
 
             if payload is not None:
                 assert isinstance(payload, dict)
                 event_payload = payload
+                if "error" in event_payload:
+                    print(f"Worker error: {event_payload['error']}")
+                    print()
+                    print(f"Call stack: {event_payload['call_stack']}")
+                    break
                 result = event_payload["result"]
                 for alg_key, payload in result.items():
                     result_type_str = alg_key.split("_")[0]

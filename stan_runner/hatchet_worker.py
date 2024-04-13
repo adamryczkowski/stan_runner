@@ -55,39 +55,44 @@ def register_worker(server_address: str = "192.168.42.5:7077", server_token: str
 
         @hatchet.step("run", timeout="1h")
         def run(self, context: Context):
-            self.common(context)
-            print("Running sampling")
-            context_inputs = context.workflow_input()
-            data_str = context_inputs["request"]
-            if isinstance(data_str, str):
-                data_dict = json.loads(data_str)
-            else:
-                data_dict = data_str
-            assert isinstance(data_dict, dict)
-            output_type = data_dict["output_type"]
+            try:
+                self.common(context)
+                print("Running sampling")
+                context_inputs = context.workflow_input()
+                data_str = context_inputs["request"]
+                if isinstance(data_str, str):
+                    data_dict = json.loads(data_str)
+                else:
+                    data_dict = data_str
+                assert isinstance(data_dict, dict)
+                output_type = data_dict["output_type"]
 
-            samplers = [{"fn": self._runner.sampling, "prefix": "sampling"},
-                        {"fn": self._runner.variational_bayes, "prefix": "vb"},
-                        {"fn": self._runner.laplace_sample, "prefix": "laplace"},
-                        {"fn": self._runner.pathfinder, "prefix": "pathfinder"}]
+                samplers = [{"fn": self._runner.sampling, "prefix": "sampling"},
+                            {"fn": self._runner.variational_bayes, "prefix": "vb"},
+                            {"fn": self._runner.laplace_sample, "prefix": "laplace"},
+                            {"fn": self._runner.pathfinder, "prefix": "pathfinder"}]
 
-            output = {}
+                output = {}
 
-            for args in samplers:
-                fn = args["fn"]
-                prefix = args["prefix"]
-                args_key = f"{prefix}_args"
-                if args_key in data_dict:
-                    print(f"Running {prefix}")
-                    result: InferenceResult = fn(**data_dict[args_key])
-                    if result is not None:
-                        output[prefix] = result.serialize_to_dict(output_type)
-                    else:
-                        print(f"Result unavailable: {data_dict[args_key]}")
+                for args in samplers:
+                    fn = args["fn"]
+                    prefix = args["prefix"]
+                    args_key = f"{prefix}_args"
+                    if args_key in data_dict:
+                        print(f"Running {prefix}")
+                        result: InferenceResult = fn(**data_dict[args_key])
+                        if result is not None:
+                            output[prefix] = result.serialize_to_dict(output_type)
+                        else:
+                            print(f"Result unavailable: {data_dict[args_key]}")
 
-            return {"result": output}
+                return {"result": output}
+            except Exception as e:
+                # Return nice-formatted call stack
+                import traceback
+                return {"call_stack": traceback.format_exc(), "error": str(e)}
 
-    worker = hatchet.worker(worker_name)
+    worker = hatchet.worker(worker_name, max_runs=8)
     worker.register_workflow(Hatchet_StanRunner())
 
     return worker
