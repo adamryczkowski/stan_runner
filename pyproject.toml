@@ -25,6 +25,7 @@ humanize = "^4.9.0"
 hatchet-sdk = "^0.18.0"
 load-dotenv = "^0.1.0"
 jsonpickle = "^3.0.4"
+nats-py = "^2.7.2"
 
 [tool.poetry.extras]
 hatchet = ["hatchet"]
