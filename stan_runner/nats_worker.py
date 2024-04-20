@@ -1,32 +1,129 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import pickle
-from datetime import timedelta
-from hashlib import sha256
-from pathlib import Path
-from typing import Any
+import signal
 import traceback
+import uuid
+from pathlib import Path
 
-import numpy as np
-from ValueWithError import ValueWithError, ValueWithErrorVec, IValueWithError
-from hatchet_sdk import Hatchet
+from nats.aio.msg import Msg
 from nats.js import JetStreamContext
-from nats.js.api import StreamInfo, RawStreamMsg
-from nats import NATS
-from nats.js.errors import NotFoundError
+
 from .cmdstan_runner import CmdStanRunner
+from .ifaces import StanOutputScope, StanResultEngine
+from .nats_utils import name_topic_datadef, name_topic_modeldef, name_topic_run, STREAM_NAME, connect_to_nats
+from .worker_capacity_info import WorkerCapacityInfo
 
-from overrides import overrides
+class NatsWorker:
+    _runner: CmdStanRunner
+    _js: JetStreamContext
+    _uid: str
+    _self_capacity: WorkerCapacityInfo
 
-from .cmdstan_runner import InferenceResult
-from .ifaces import StanOutputScope, IInferenceResult, StanErrorType, IStanRunner, StanResultEngine
-from .nats_utils import create_stream, name_topic_datadef, name_topic_modeldef, name_topic_run, STREAM_NAME
-from .utils import infer_param_shapes, normalize_stan_model_by_str
+    def __init__(self, nats_connection: str, user: str, password: str):
+        self._runner = CmdStanRunner(Path("model_cache"))
+        nats = connect_to_nats(nats_connection, user, password)
+        self._js = nats.jetstream()
+        self._uid = "worker_" + str(uuid.uuid4())[0:8]
+        self._self_capacity = WorkerCapacityInfo.BenchmarkSelf(self._runner.model_code)
+
+    async def handle_task(self, msg: Msg):
+        if msg.headers["format"] == "pickle":
+            data = pickle.loads(msg.data)
+        else:
+            raise Exception(f"Unknown format {msg.headers['format']}")
+        output_scope = StanOutputScope.FromStr(msg.headers["output_scope"])
+        _stan, _topic, run_hash = msg.subject.split(".")
+        assert _stan == "stan"
+        assert _topic == "rundef"
+
+        assert isinstance(data, dict)
+
+        # Get the model code
+        assert "model_hash" in data
+        model_code_dict = await get_model_code(data["model_hash"], self._js)
+        self._runner.load_model_by_str(model_code_dict["code"], model_code_dict["name"], None)
+
+        # Get the data
+        assert "data_hash" in data
+        data = await get_data(data["data_hash"], self._js)
+        self._runner.load_data_by_dict(data)
+
+        # Run the model
+        assert "run_opts" in data
+        assert "engine" in data
+        run_opts = data["run_opts"]
+        engine = StanResultEngine.FromStr(data["engine"])
+
+        if engine == StanResultEngine.MCMC:
+            result = self._runner.sampling(**run_opts)
+        elif engine == StanResultEngine.VB:
+            result = self._runner.variational_bayes(**run_opts)
+        elif engine == StanResultEngine.LAPLACE:
+            result = self._runner.laplace_sample(**run_opts)
+        elif engine == StanResultEngine.PATHFINDER:
+            result = self._runner.pathfinder(**run_opts)
+        else:
+            raise Exception(f"Unknown engine {engine}")
+
+        # Serialize the result
+        result_payload = result.serialize(output_scope)
+
+        # Publish the result
+        result_topic, _ = name_topic_run(run_hash, "runresult")
+        await msg.ack()
+        await self._js.publish(subject=result_topic, payload=result_payload,
+                               headers={"format": "pickle", "output_scope": output_scope.txt_value(),
+                                        "status": "success"})  # Three statuses: success, failure, exception. Exceptions will be retried.
+
+    async def wait_for_tasks(self):
+        while True:
+            try:
+                subscription = await self._js.subscribe(stream=STREAM_NAME, subject="stan.rundef.>", manual_ack=True,
+                                                        idle_heartbeat=30., pending_msgs_limit=1)
+
+                while True:
+                    msg = await subscription.next_msg()
+                    await self.handle_task(msg)
 
 
-async def get_model_code(model_hash: str, js: JetStreamContext) -> dict[str,str]:
+            except Exception as e:
+                print(e)
+                traceback.print_exc()
+                break
+
+    async def send_heartbeat(self):
+        while True:
+            await self._js.publish(f"stan.worker_heartbeat.{self._uid}", b"1")
+            await asyncio.sleep(30)
+
+    def main_loop(self):
+        loop = asyncio.get_event_loop()
+
+        async def shutdown(signal, loop):
+            print(f"Received exit signal {signal.name}...")
+            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+            [task.cancel() for task in tasks]
+
+            print(f"Cancelling {len(tasks)} tasks")
+            await asyncio.gather(*tasks, return_exceptions=True)
+            loop.stop()
+
+        # Attach the shutdown coroutine to SIGINT
+        loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(shutdown(signal.SIGINT, loop)))
+
+        loop.create_task(self.wait_for_tasks())
+        loop.create_task(self.send_heartbeat())
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+            print("Successfully shutdown the loop")
+
+
+async def get_model_code(model_hash: str, js: JetStreamContext) -> dict[str, str]:
     """
     Get the Stan model code from the NATS server.
     """
@@ -40,6 +137,7 @@ async def get_model_code(model_hash: str, js: JetStreamContext) -> dict[str,str]
     assert isinstance(model_code, dict)
 
     return model_code
+
 
 async def get_data(data_hash: str, js: JetStreamContext) -> dict:
     """
@@ -55,112 +153,3 @@ async def get_data(data_hash: str, js: JetStreamContext) -> dict:
 
     return data
 
-def spawn_worker(nats_connection: str, user: str, password: str):
-    nc = NATS()
-    js: JetStreamContext = nc.jetstream()
-    runner = CmdStanRunner(Path("model_cache"))
-
-    async def main_loop():
-        try:
-            await nc.connect(nats_connection, user=user, password=password, max_reconnect_attempts=1)
-
-            try:
-                stream = await js.stream_info(name=STREAM_NAME)
-            except NotFoundError as e:
-                raise Exception(f"Stream {STREAM_NAME} not found.")
-        except Exception as e:
-            # Prints error and the stack trace:
-            print(e)
-            traceback.print_exc()
-            return None
-
-        while True:
-            try:
-                subscription = await js.subscribe(stream=STREAM_NAME, subject="stan.rundef.>", manual_ack=True,
-                                         idle_heartbeat=30., pending_msgs_limit=1)
-
-                while True:
-                    msg = await subscription.next_msg()
-                    if msg.headers["format"] == "pickle":
-                        data = pickle.loads(msg.data)
-                    else:
-                        raise Exception(f"Unknown format {msg.headers['format']}")
-                    output_scope = StanOutputScope.FromStr(msg.headers["output_scope"])
-                    _stan, _topic, run_hash = msg.subject.split(".")
-                    assert _stan == "stan"
-                    assert _topic == "rundef"
-
-                    assert isinstance(data, dict)
-
-                    # Get the model code
-                    assert "model_hash" in data
-                    model_code_dict = await get_model_code(data["model_hash"], js)
-                    runner.load_model_by_str(model_code_dict["code"], model_code_dict["name"], None)
-
-                    # Get the data
-                    assert "data_hash" in data
-                    data = await get_data(data["data_hash"], js)
-                    runner.load_data_by_dict(data)
-
-                    # Run the model
-                    assert "run_opts" in data
-                    assert "engine" in data
-                    run_opts = data["run_opts"]
-                    engine = StanResultEngine.FromStr(data["engine"])
-
-                    if engine == StanResultEngine.MCMC:
-                        result = runner.sampling(**run_opts)
-                    elif engine == StanResultEngine.VB:
-                        result = runner.variational_bayes(**run_opts)
-                    elif engine == StanResultEngine.LAPLACE:
-                        result = runner.laplace_sample(**run_opts)
-                    elif engine == StanResultEngine.PATHFINDER:
-                        result = runner.pathfinder(**run_opts)
-                    else:
-                        raise Exception(f"Unknown engine {engine}")
-
-                    # Serialize the result
-                    result_payload = result.serialize(output_scope)
-
-                    # Publish the result
-                    result_topic, _ = name_topic_run(run_hash, "result")
-                    await msg.ack()
-                    await js.publish(subject=result_topic, payload=result_payload,
-                                     headers={"format": "pickle", "output_scope": output_scope.txt_value()})
-
-
-            except Exception as e:
-                print(e)
-                traceback.print_exc()
-                break
-
-    # Connect to the NATS server
-    nc.connect("nats://localhost:4222")
-
-    # Subscribe to the 'stan_runner' subject
-    async def message_handler(msg):
-        """
-        Handles messages received from the NATS server.
-        """
-        # Decode the message
-        data = json.loads(msg.data.decode())
-
-        # Get the message type
-        message_type = data["type"]
-
-        # Get the message data
-        message_data = data["data"]
-
-        # Handle the message
-        if message_type == "run_stan":
-            # Run the Stan model
-            run_stan(message_data)
-
-    await nc.subscribe("stan_runner", cb=message_handler)
-
-    # Run the event loop
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_forever()
-    except KeyboardInterrupt:
-        loop.close()

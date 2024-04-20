@@ -26,6 +26,7 @@ hatchet-sdk = "^0.18.0"
 load-dotenv = "^0.1.0"
 jsonpickle = "^3.0.4"
 nats-py = "^2.7.2"
+psutil = "^5.9.8"
 
 [tool.poetry.extras]
 hatchet = ["hatchet"]

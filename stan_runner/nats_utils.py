@@ -10,6 +10,19 @@ from nats.js.errors import NotFoundError
 STREAM_NAME = "stan_runner"
 
 
+def connect_to_nats(nats_connection: str, user: str, password: str) -> NATS:
+    nc = NATS()
+    loop = asyncio.get_event_loop()
+
+    async def connect():
+        await nc.connect(nats_connection, user=user, password=password)
+        loop.stop()
+
+    loop.run_until_complete(connect())
+    loop.close()
+    return nc
+
+
 def create_stream(nats_connection: str, user: str, password: str, permanent_storage: bool, stream_name: str,
                   max_bytes=1024 * 1024 * 1024) -> tuple[JetStreamContext, StreamInfo]:
     nc = NATS()
