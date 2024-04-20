@@ -27,17 +27,29 @@ class StanResultEngine(Enum):
     PATHFINDER = 4
 
     @staticmethod
-    def from_str(value: str) -> StanResultEngine:
+    def FromStr(value: str) -> StanResultEngine:
         if value == "laplace":
             return StanResultEngine.LAPLACE
         elif value == "vb":
             return StanResultEngine.VB
-        elif value == "sampling":
+        elif value == "mcmc":
             return StanResultEngine.MCMC
         elif value == "pathfinder":
             return StanResultEngine.PATHFINDER
         else:
             raise ValueError(f"Unknown StanResultEngine: {value}")
+
+    def txt_value(self):
+        if self == StanResultEngine.LAPLACE:
+            return "laplace"
+        elif self == StanResultEngine.VB:
+            return "vb"
+        elif self == StanResultEngine.MCMC:
+            return "mcmc"
+        elif self == StanResultEngine.PATHFINDER:
+            return "pathfinder"
+        else:
+            raise ValueError(f"Unknown StanResultEngine: {self}")
 
 
 class StanOutputScope(Enum):
@@ -57,6 +69,19 @@ class StanOutputScope(Enum):
             return "raw"
         else:
             raise ValueError(f"Unknown StanOutputScope: {self}")
+
+    @staticmethod
+    def FromStr(value: str) -> StanOutputScope:
+        if value == "main_effects":
+            return StanOutputScope.MainEffects
+        elif value == "covariances":
+            return StanOutputScope.Covariances
+        elif value == "draws":
+            return StanOutputScope.FullSamples
+        elif value == "raw":
+            return StanOutputScope.RawOutput
+        else:
+            raise ValueError(f"Unknown StanOutputScope: {value}")
 
     def txt_value(self):
         if self == StanOutputScope.MainEffects:
@@ -130,7 +155,7 @@ class IInferenceResult(ABC):
         ...
 
     @abstractmethod
-    def serialize_to_file(self, output_type: str, file_name: str):
+    def serialize(self, output_scope: StanOutputScope)->bytes:
         ...
 
     @property

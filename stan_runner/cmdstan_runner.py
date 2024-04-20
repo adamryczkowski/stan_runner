@@ -17,7 +17,7 @@ from overrides import overrides
 
 from .ifaces import StanErrorType, IStanRunner, IInferenceResult
 from .result_adapter import InferenceResult
-from .utils import find_model_in_cache
+from .utils import find_model_in_cache, normalize_stan_model_by_file
 
 _fallback = json._default_encoder.default
 json._default_encoder.default = lambda obj: getattr(obj.__class__, "to_json", _fallback)(obj)
@@ -185,38 +185,16 @@ class CmdStanRunner(IStanRunner):
     def load_model_by_file(self, stan_file: str | Path, model_name: str | None = None, pars_list: list[str] = None):
         if not self.is_initialized:
             self.install_dependencies()
-        if isinstance(stan_file, str):
-            stan_file = Path(stan_file)
-        assert isinstance(stan_file, Path)
-        assert stan_file.exists()
-        assert stan_file.is_file()
-        if pars_list is not None:
-            assert isinstance(pars_list, list)
-            assert all(isinstance(p, str) for p in pars_list)
 
-        stdout = io.StringIO()
-        stderr = io.StringIO()
+        model_filename_tmp, msg = normalize_stan_model_by_file(stan_file)
 
-        # Copy stan_file to temporary location
-        tmpfile = tempfile.NamedTemporaryFile("w", delete=False)
-        tmpfile.write(stan_file.read_bytes().decode())
-        tmpfile.close()
+        if model_filename_tmp is None:
+            self._messages.update(msg)
+            return
 
-        with redirect_stdout(stdout), redirect_stderr(stderr):
-            try:
-                cmdstanpy.format_stan_file(tmpfile.name, overwrite_file=True,
-                                           canonicalize=["deprecations", "parentheses", "braces", "includes",
-                                                         "strip-comments"])
-            except subprocess.CalledProcessError as e:
-                self._messages["stanc_output"] = stdout.getvalue() + e.stdout
-                self._messages["stanc_warning"] = stderr.getvalue()
-                self._messages["stanc_error"] = e.stderr
-                return
+        self.messages.update(msg)
 
-        self._messages["stanc_output"] = stdout.getvalue()
-        self._messages["stanc_warning"] = stderr.getvalue()
-
-        with open(tmpfile.name, 'rb', buffering=0) as f:
+        with open(model_filename_tmp.name, 'rb', buffering=0) as f:
             model_hash = hashlib.file_digest(f, 'sha256').hexdigest()
 
         if model_hash == self._last_model_hash:
@@ -224,7 +202,7 @@ class CmdStanRunner(IStanRunner):
 
         model_filename = find_model_in_cache(self._model_cache, model_name, model_hash)
         if not model_filename.exists():
-            model_filename.write_bytes(Path(tmpfile.name).read_bytes())
+            model_filename.write_bytes(Path(model_filename_tmp.name).read_bytes())
 
         self._pars_of_interest = pars_list
 
@@ -285,10 +263,20 @@ class CmdStanRunner(IStanRunner):
         """Loads data from a structureal file. Right now, the supported format is only JSON."""
         if isinstance(data_file, str):
             data_file = Path(data_file)
+
         assert isinstance(data_file, Path)
         assert data_file.exists()
         assert data_file.is_file()
-        self._data = data_file
+
+        if data_file.suffix == ".json":
+            json_data = data_file.read_text()
+            self._data = json.loads(json_data)
+        elif data_file.suffix == ".pkl":
+            import pickle
+            with data_file.open("rb") as f:
+                self._data = pickle.load(f)
+        else:
+            raise ValueError("Unknown data file type")
 
     @overrides
     def load_data_by_dict(self, data: dict[str, float | int | np.ndarray]):

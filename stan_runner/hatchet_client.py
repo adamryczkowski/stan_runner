@@ -277,7 +277,7 @@ class DelayedInferenceResult:
                 result = event_payload["result"]
                 for alg_key, payload in result.items():
                     result_type_str = alg_key.split("_")[0]
-                    result_type = StanResultEngine.from_str(result_type_str)
+                    result_type = StanResultEngine.FromStr(result_type_str)
                     assert isinstance(payload, dict)
                     assert len(payload) == 1
                     for key, arg_dict in payload.items():
@@ -390,7 +390,7 @@ class InferenceResultMainEffects(IInferenceResult):
         return StanOutputScope.MainEffects
 
     @overrides
-    def serialize_to_file(self, output_type: str, file_name: str):
+    def serialize(self, output_scope: StanOutputScope)->bytes:
         raise NotImplementedError
 
     @overrides

@@ -18,7 +18,7 @@ from cmdstanpy.cmdstan_args import CmdStanArgs
 from cmdstanpy.stanfit.vb import RunSet
 from overrides import overrides
 
-from .utils import make_dict_serializable
+from .utils import make_dict_serializable, serialize_to_bytes
 from .ifaces import IInferenceResult, StanResultEngine, StanOutputScope
 
 _fallback = json._default_encoder.default
@@ -106,9 +106,6 @@ class InferenceResult(IInferenceResult):
     def result_scope(self) -> StanOutputScope:
         return StanOutputScope.RawOutput
 
-    @overrides
-    def serialize_to_file(self, output_type: str, file_name: str):
-        raise NotImplementedError()
 
     @property
     def messages(self) -> dict[str, str] | None:
@@ -292,7 +289,8 @@ class InferenceResult(IInferenceResult):
             out[par] = self.get_parameter_estimate(par)
         return out
 
-    def serialize_to_dict(self, output_type: str):
+    @overrides
+    def serialize(self, output_scope: StanOutputScope)->bytes:
         if self._runtime is None:
             total_seconds = -1
         else:
@@ -300,12 +298,13 @@ class InferenceResult(IInferenceResult):
         ans_dict = {"runtime": total_seconds, "messages": self._messages}
         ans_dict["method_name"] = self.method_name
 
-        if output_type == "main_effects":
+        if output_scope == output_scope.MainEffects:
             ans = self.all_main_effects()
             ans_dict["vars"] = {key: {"value": ans[key].value, "SE": ans[key].SE, "N": ans[key].N} for key in ans}
             ans_dict["sample_count"] = self.sample_count()
-            return {"main_effects": ans_dict}
-        if output_type == "covariances":
+
+            return serialize_to_bytes({"main_effects": ans_dict}, "pickle")
+        if output_scope == output_scope.Covariances:
             means = {key: np.mean(values) for key, values in self._result.stan_variables().items()}
             cov_matrix, one_dim_names = self.get_cov_matrix()
             ans_dict["cov"] = cov_matrix.tolist()
@@ -313,25 +312,28 @@ class InferenceResult(IInferenceResult):
             ans_dict["means"] = means
             ans_dict["N"] = [self.sample_count(name) for name in one_dim_names]
             ans_dict["sample_count"] = self.sample_count()
-            return {"covariances": make_dict_serializable(ans_dict)}
-        if output_type == "draws":
+
+            return serialize_to_bytes({"covariances": ans_dict}, "pickle")
+        if output_scope == StanOutputScope.FullSamples:
             ans_dict["draws"] = self.draws(False).tolist()
             ans_dict["names"] = self.onedim_parameters
-            return {"draws": make_dict_serializable(ans_dict)}
-        if output_type == "raw":
+
+            return serialize_to_bytes({"draws": ans_dict}, "pickle")
+        if output_scope == StanOutputScope.RawOutput:
             file = self.serialize()
             # Encode file as base64
             with open(file, "rb") as f:
                 data = f.read()
-                ans_dict["raw"] = base64.b64encode(data).decode("utf-8")
-                return {"raw": ans_dict}
+                ans_dict["zip"] = data
+
+            return serialize_to_bytes({"raw": ans_dict}, "pickle")
 
         raise ValueError("Unknown output type")
 
     def to_json(self, output_type: str) -> str:
         if output_type == "all":
             return jsonpickle.encode(self)
-        return json.dumps(self.serialize_to_dict(output_type))
+        return json.dumps(self.serialize(output_type))
 
     def serialize(self) -> Path:
         """Serializes the method into a single file that is readable."""

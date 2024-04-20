@@ -1,7 +1,19 @@
+import subprocess
+import io
+import json
+import tempfile
+from contextlib import redirect_stdout, redirect_stderr
 from hashlib import sha256
-from pathlib import Path
 from math import prod
+from pathlib import Path
+import pickle
+from typing import Any, Optional
+
+import cmdstanpy
 import numpy as np
+
+from .ifaces import StanOutputScope
+
 
 def find_model_in_cache(model_cache: Path, model_name: str, model_hash: str) -> Path:
     best_model_filename = None
@@ -27,7 +39,6 @@ def find_model_in_cache(model_cache: Path, model_name: str, model_hash: str) -> 
 
     assert best_model_filename is not None
     return best_model_filename
-
 
 
 def infer_param_shapes(one_dim_names: list[str]) -> tuple[dict[str, tuple[int, ...]], dict[str, list[str]]]:
@@ -97,3 +108,87 @@ def make_dict_serializable(d: dict) -> dict:
         elif isinstance(d[key], np.ndarray):
             d[key] = d[key].tolist()
     return d
+
+
+def denumpy_dict(d: dict[str, Any]) -> dict[str, Any]:
+    ans = {}
+    for key in d:
+        if isinstance(d[key], np.ndarray):
+            ans[key] = d[key].tolist()
+        elif isinstance(d[key], dict):
+            ans[key] = denumpy_dict(d[key])
+        else:
+            ans[key] = d[key]
+    return ans
+
+
+def model2json(stan_code: str, model_name: str, data: dict, output_type: StanOutputScope,
+               **kwargs) -> str:
+    assert isinstance(stan_code, str)
+    assert isinstance(model_name, str)
+    assert isinstance(data, dict)
+    # assert isinstance(engine, StanResultEngine)
+    assert isinstance(output_type, StanOutputScope)
+
+    out = {}
+    out["model_code"] = stan_code
+    out["model_name"] = model_name
+    out["data"] = denumpy_dict(data)
+    out["output_type"] = output_type.txt_value()
+    out.update(kwargs)
+
+    # Convert out to json
+    return str(json.dumps(out))
+
+
+def normalize_stan_model_by_str(stan_code: str) -> tuple[Optional[str], dict[str, str]]:
+    # Write the model to a disposable temporary location
+    with tempfile.NamedTemporaryFile("w", delete=True) as f:
+        f.write(stan_code)
+        model_filename = Path(f.name)
+
+        file_out, msg = normalize_stan_model_by_file(model_filename)
+        if file_out is None:
+            return None, msg
+
+        return file_out.read_text(), msg
+
+
+def normalize_stan_model_by_file(stan_file: str | Path) -> tuple[Optional[Path], dict[str, str]]:
+    if isinstance(stan_file, str):
+        stan_file = Path(stan_file)
+    assert isinstance(stan_file, Path)
+    assert stan_file.exists()
+    assert stan_file.is_file()
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    # Copy stan_file to temporary location
+    tmpfile = tempfile.NamedTemporaryFile("w", delete=False)
+    tmpfile.write(stan_file.read_bytes().decode())
+    tmpfile.close()
+
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        try:
+            cmdstanpy.format_stan_file(tmpfile.name, overwrite_file=True,
+                                       canonicalize=["deprecations", "parentheses", "braces", "includes",
+                                                     "strip-comments"])
+        except subprocess.CalledProcessError as e:
+            msg = {"stanc_output": stdout.getvalue() + e.stdout,
+                   "stanc_warning": stderr.getvalue(),
+                   "stanc_error": e.stderr}
+            return None, msg
+
+    msg = {"stanc_output": stdout.getvalue(),
+           "stanc_warning": stderr.getvalue()}
+
+    return Path(tmpfile.name), msg
+
+def serialize_to_bytes(obj: Any, format:str) -> bytes:
+    if format == "pickle":
+        if isinstance(obj, dict):
+            obj = make_dict_serializable(obj)
+        return pickle.dumps(obj)
+    else:
+        raise Exception(f"Unknown format {format}")
