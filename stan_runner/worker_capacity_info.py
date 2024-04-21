@@ -5,7 +5,7 @@ import timeit
 import concurrent.futures
 import math
 
-from .utils import human_readable_size
+from adams_text_utils import human_readable_size
 
 
 class WorkerCapacityInfo:

@@ -99,7 +99,9 @@ class NatsWorker:
             await asyncio.sleep(30)
 
     def main_loop(self):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.new_event_loop()
+
+
 
         async def shutdown(signal, loop):
             print(f"Received exit signal {signal.name}...")
@@ -112,6 +114,7 @@ class NatsWorker:
             loop.stop()
 
         # Attach the shutdown coroutine to SIGINT
+
         loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(shutdown(signal.SIGINT, loop)))
 
         loop.create_task(self.wait_for_tasks())

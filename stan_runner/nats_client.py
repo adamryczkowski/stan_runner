@@ -10,7 +10,6 @@ from typing import Any
 
 import numpy as np
 from ValueWithError import ValueWithError, ValueWithErrorVec, IValueWithError
-from hatchet_sdk import Hatchet
 from nats.js import JetStreamContext
 from nats.js.api import StreamInfo, RawStreamMsg
 from overrides import overrides
@@ -92,8 +91,6 @@ class RemoteStanRunner(IStanRunner):
 
     @property
     def is_server_alive(self) -> bool:
-        loop = asyncio.get_event_loop()
-
         async def check():
             try:
                 await self._server_context.stream_info(name=STREAM_NAME)
@@ -103,15 +100,11 @@ class RemoteStanRunner(IStanRunner):
                 return False
 
         try:
-            ans = loop.run_until_complete(asyncio.wait_for(check(), timeout=1))
+            ans = asyncio.run(check())
         except asyncio.TimeoutError:
             print("Server check timed out")
             return False
 
-        async def close():
-            loop.stop()
-
-        loop.run_until_complete(close())
         return ans
 
     @property
@@ -247,7 +240,7 @@ class RemoteStanRunner(IStanRunner):
                 await self._server_context.publish(subject=run_topic, payload=run_payload, stream=STREAM_NAME,
                                                    headers={"format": "pickle", "scope": self._output_type.txt_value()})
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(asyncio.wait_for(run(), timeout=timeout))
         except asyncio.TimeoutError:
@@ -264,7 +257,7 @@ class RemoteStanRunner(IStanRunner):
         Waits for the result of the run
         """
         run_topic = name_topic_run(run_hash, "runresult")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.new_event_loop()
         msg: RawStreamMsg | None = None
         messages = {}
 
@@ -551,7 +544,7 @@ class InferenceResultMainEffects(IInferenceResult):
         return StanOutputScope.MainEffects
 
     @overrides
-    def serialize(self, output_scope: str):
+    def serialize(self, output_scope: StanOutputScope)->bytes:
         raise NotImplementedError
 
     @overrides

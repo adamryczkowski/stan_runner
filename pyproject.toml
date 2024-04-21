@@ -21,12 +21,14 @@ valuewitherror = {git = "https://github.com/adamryczkowski/ValueWithError.git", 
 prettytable = "^3.10.0"
 scipy = "^1.12.0"
 cmdstanpy = {version = "^1.2.2", extras = ["all"]} #, git = "https://github.com/stan-dev/cmdstanpy", branch = "develop"}
+adams_text_utils = {git = "https://github.com/adamryczkowski/adams-text-utils.git", branch = "master"}
 humanize = "^4.9.0"
 hatchet-sdk = "^0.18.0"
 load-dotenv = "^0.1.0"
 jsonpickle = "^3.0.4"
 nats-py = "^2.7.2"
 psutil = "^5.9.8"
+netifaces = "^0.11.0"
 
 [tool.poetry.extras]
 hatchet = ["hatchet"]
