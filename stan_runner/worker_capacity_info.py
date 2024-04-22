@@ -4,7 +4,7 @@ import psutil
 import timeit
 import concurrent.futures
 import math
-
+import json
 from adams_text_utils import human_readable_size
 
 
@@ -15,6 +15,11 @@ class WorkerCapacityInfo:
     _disk_free: int
     _cpu_benchmark_st: float  # Single-threaded
     _cpu_benchmark_at: float  # All threads
+
+    @staticmethod
+    def CreateFromSerialized(data: bytes) -> WorkerCapacityInfo:
+        d = json.loads(data)
+        return WorkerCapacityInfo(**d)
 
     @staticmethod
     def BenchmarkSelf(model_cache_dir: Path) -> WorkerCapacityInfo:
@@ -69,6 +74,17 @@ class WorkerCapacityInfo:
         print(f"Free disk space: {human_readable_size(self.disk_free)}")
         print(f"CPU benchmark (single-threaded): {self.cpu_benchmark_st:.2f} iterations/s")
         print(f"CPU benchmark (all threads): {self.cpu_benchmark_at:.2f} iterations/s")
+
+    def serialize(self)->bytes:
+        d = {
+            "total_mem": self.total_mem,
+            "free_mem": self.free_mem,
+            "total_cores": self.total_cores,
+            "disk_free": self.disk_free,
+            "cpu_benchmark_st": self.cpu_benchmark_st,
+            "cpu_benchmark_at": self.cpu_benchmark_at
+        }
+        return json.dumps(d).encode()
 
     def __repr__(self):
         return self.pretty_print()

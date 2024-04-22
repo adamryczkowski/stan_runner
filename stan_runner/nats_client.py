@@ -24,7 +24,6 @@ from .utils import infer_param_shapes, normalize_stan_model_by_str
 class RemoteStanRunner(IStanRunner):
     _server_context: JetStreamContext | None
     _server_stream: StreamInfo | None
-    _server_url: str
     _normalize_code: bool
 
     _stan_model: str | Path | None

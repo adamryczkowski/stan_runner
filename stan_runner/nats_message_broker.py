@@ -20,11 +20,9 @@ from nats.js.api import RawStreamMsg
 from nats.js.errors import NotFoundError
 
 from .ifaces import StanOutputScope, StanResultEngine
-from .nats_utils import STREAM_NAME, create_stream
-from .nats_utils import connect_to_nats
+from .nats_utils import STREAM_NAME, create_stream, connect_to_nats, WORKER_TIMEOUT_SECONDS
 from .worker_capacity_info import WorkerCapacityInfo
 
-WORKER_TIMEOUT_SECONDS = 60
 
 
 # This is a message broker.
@@ -245,7 +243,7 @@ class MessageBroker:
     async def handle_worker_adv(self, message: Msg):
         """Called when a worker advertises itself"""
         worker_id = message.subject.split(".")[-1]
-        worker_props = pickle.loads(message.data)
+        worker_props = json.loads(message.data)
         worker = WorkerInfo(**worker_props)
         assert worker_id == worker.worker_hash
 
@@ -290,7 +288,7 @@ class MessageBroker:
         for worker_id, worker in self._workers.items():
             if worker.can_handle_task(task):
                 print(f"Sending task {task_hash} to worker {worker_id}")
-                await self._server_context.publish(f"stan.work_task.{worker_id}", task_hash.encode())
+                await self._server_context.publish(f"stan.work_order.{worker_id}", task_hash.encode())
                 return
 
         # If we are here, there were are no workers that can handle the task
@@ -357,7 +355,6 @@ class MessageBroker:
         print("Removing broadcast message...")
         if last_message is not None:
             await self._server_context.delete_msg(STREAM_NAME, last_message.seq)
-
 
         print("Received exit signal, shutting down...")
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]

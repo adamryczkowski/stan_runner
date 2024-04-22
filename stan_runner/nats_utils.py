@@ -8,6 +8,7 @@ from nats.js.api import StorageType, DiscardPolicy, StreamInfo
 from nats.js.errors import NotFoundError
 
 STREAM_NAME = "stan_runner"
+WORKER_TIMEOUT_SECONDS = 60
 
 
 async def connect_to_nats(nats_connection: str, user: str, password: str) -> nats.NATS:
