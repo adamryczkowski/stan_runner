@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import asyncio
-import traceback
+import time
+from abc import ABC, abstractmethod
 from base64 import b64encode
 
 import nats
 from nats.js import JetStreamContext
+from nats.js.api import RawStreamMsg
 from nats.js.api import StorageType, DiscardPolicy, StreamInfo
 from nats.js.errors import NotFoundError
 
@@ -11,7 +15,7 @@ STREAM_NAME = "stan_runner"
 WORKER_TIMEOUT_SECONDS = 60
 
 
-async def connect_to_nats(nats_connection: str, user: str, password: str) -> nats.NATS:
+async def connect_to_nats(nats_connection: str, user: str, password: str | None = None) -> nats.NATS:
     if password is None:
         nc = await nats.connect(nats_connection, token=user, max_reconnect_attempts=1)
     else:
@@ -109,3 +113,91 @@ def name_topic_run(run_hash: bytes | str, topic: str) -> tuple[str, str]:
     if isinstance(run_hash, bytes):
         run_hash = b64encode(run_hash).decode()[0:10]
     return f"stan.{topic}.{run_hash}", run_hash
+
+
+class SerializableObject(ABC):
+    @abstractmethod
+    def serialize(self) -> bytes:
+        pass
+
+
+class KeepAliver:
+    """Class that sends keep-alive messages to the NATS server."""
+    _subject: str  # The subject to send the keep-alive messages to
+    _js: JetStreamContext  # The JetStream context to use
+    _my_id: str | None  # The ID of this worker. Will be checked against the last message to ensure that only one worker is running on this subject.
+    _timeout: float
+    _content_object: bytes | None
+    _serialized_format: str
+
+    @staticmethod
+    async def Create(self, js: JetStreamContext, subject: str, timeout: float = 60., unique_id: str = None,
+                     serialized_content: bytes = None, serialized_format: str = "json") -> KeepAliver:
+        obj = KeepAliver(js, subject, timeout, unique_id, serialized_content, serialized_format)
+        await obj.remove_all_past_messages()
+
+    def __init__(self, js: JetStreamContext, subject: str, timeout: float = 60., unique_id: str = None,
+                 serialized_content: bytes = None, serialized_format: str = "json"):
+        self._js = js
+        self._subject = subject
+        self._my_id = unique_id
+        self._timeout = timeout
+        if serialized_content is None:
+            serialized_content = b""
+        self._content_object = serialized_content
+        self._serialized_format = serialized_format
+
+    async def remove_all_past_messages(self):
+        # Remove all the messages that are in the subject self._subject
+        #
+        # Iterate over all the messages in the stream and delete them one-by-one using self._js.delete_msg(STREAM_NAME...)
+
+        while True:
+            try:
+                last_message: RawStreamMsg = await self._js.get_msg(stream_name=STREAM_NAME,
+                                                                    subject=self._subject, next=True)
+            except nats.js.errors.NotFoundError:
+                break
+
+            await self._js.delete_msg(STREAM_NAME, last_message.seq)
+
+    async def keep_alive(self):
+        """Send a keep-alive message to the NATS server."""
+        try:
+            while True:
+                try:
+                    last_message: RawStreamMsg | None = await self._js.get_last_msg(stream_name=STREAM_NAME,
+                                                                                    subject=self._subject)
+                except nats.js.errors.NotFoundError:
+                    last_message = None
+
+                if last_message is not None:
+                    time_to_last_message = time.time() - float(last_message.headers["timestamp"])
+                    if self._my_id is not None and last_message.headers["id"] != self._my_id:
+                        if time_to_last_message < self._timeout:
+                            raise Exception(f"Id mismatch: {last_message.headers['id']} != {self._my_id}")
+                else:
+                    time_to_last_message = float("inf")
+
+                if (time_to_wait := max(0., self._timeout - time_to_last_message)) > 0:
+                    await asyncio.sleep(time_to_wait)
+
+                headers = {
+                    "format": self._serialized_format,
+                    "timestamp": str(float(time.time()))}
+
+                if self._my_id is not None:
+                    headers["id"] = self._my_id
+
+                await self._js.publish(self._subject, payload=self._content_object, stream=STREAM_NAME, headers=headers)
+                if last_message is not None:
+                    await self._js.delete_msg(STREAM_NAME, last_message.seq)
+        except asyncio.CancelledError:
+            try:
+                print("Canceling keep-alive message...")
+                last_message: RawStreamMsg | None = await self._js.get_last_msg(stream_name=STREAM_NAME,
+                                                                                subject=self._subject)
+            except nats.js.errors.NotFoundError:
+                return
+            else:
+                await self._js.delete_msg(STREAM_NAME, last_message.seq)
