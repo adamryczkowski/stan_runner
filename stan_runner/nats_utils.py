@@ -129,6 +129,7 @@ class KeepAliver:
     _timeout: float
     _content_object: bytes | None
     _serialized_format: str
+    _last_msg_seq: int | None
 
     @staticmethod
     async def Create(self, js: JetStreamContext, subject: str, timeout: float = 60., unique_id: str = None,
@@ -146,20 +147,28 @@ class KeepAliver:
             serialized_content = b""
         self._content_object = serialized_content
         self._serialized_format = serialized_format
+        self._last_msg_seq = None
 
     async def remove_all_past_messages(self):
-        # Remove all the messages that are in the subject self._subject
-        #
-        # Iterate over all the messages in the stream and delete them one-by-one using self._js.delete_msg(STREAM_NAME...)
-
+        seq = 0
         while True:
             try:
-                last_message: RawStreamMsg = await self._js.get_msg(stream_name=STREAM_NAME,
-                                                                    subject=self._subject, next=True)
+                if self._my_id is None:
+                    last_message: RawStreamMsg = await self._js.get_msg(seq=seq, stream_name=STREAM_NAME,
+                                                                        subject=self._subject, next=True)
+                else:
+                    last_message: RawStreamMsg = await self._js.get_msg(seq=seq, stream_name=STREAM_NAME,
+                                                                        subject=self._subject,
+                                                                        next=True)
             except nats.js.errors.NotFoundError:
                 break
 
-            await self._js.delete_msg(STREAM_NAME, last_message.seq)
+            if last_message is None:
+                break
+            seq = last_message.seq+1
+            if self._my_id is not None and last_message.headers["id"] != self._my_id:
+                continue
+            await self._js.delete_msg(STREAM_NAME, seq)
 
     async def keep_alive(self):
         """Send a keep-alive message to the NATS server."""
@@ -176,6 +185,7 @@ class KeepAliver:
                     if self._my_id is not None and last_message.headers["id"] != self._my_id:
                         if time_to_last_message < self._timeout:
                             raise Exception(f"Id mismatch: {last_message.headers['id']} != {self._my_id}")
+                    self._last_msg_seq = last_message.seq
                 else:
                     time_to_last_message = float("inf")
 
@@ -189,15 +199,11 @@ class KeepAliver:
                 if self._my_id is not None:
                     headers["id"] = self._my_id
 
-                await self._js.publish(self._subject, payload=self._content_object, stream=STREAM_NAME, headers=headers)
-                if last_message is not None:
-                    await self._js.delete_msg(STREAM_NAME, last_message.seq)
+                ack = await self._js.publish(self._subject, payload=self._content_object, stream=STREAM_NAME, headers=headers)
+                if self._last_msg_seq is not None:
+                    await self._js.delete_msg(STREAM_NAME, self._last_msg_seq)
+                    self._last_msg_seq = ack.seq
         except asyncio.CancelledError:
-            try:
-                print("Canceling keep-alive message...")
-                last_message: RawStreamMsg | None = await self._js.get_last_msg(stream_name=STREAM_NAME,
-                                                                                subject=self._subject)
-            except nats.js.errors.NotFoundError:
-                return
-            else:
-                await self._js.delete_msg(STREAM_NAME, last_message.seq)
+            print("Canceling keep-alive message...")
+            if self._last_msg_seq is not None:
+                await self._js.delete_msg(STREAM_NAME, self._last_msg_seq)

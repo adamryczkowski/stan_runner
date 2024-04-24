@@ -23,7 +23,7 @@ def list_all_tasks(nats_connect: str):
 
     nc.jetstream()
 
-def test_alive():
+def test_alive1():
 
     async def test():
         ns = await connect_to_nats("localhost:4222", "szakal")
@@ -32,23 +32,20 @@ def test_alive():
         await msg.remove_all_past_messages()
         await msg.keep_alive()
 
+    asyncio.run(test())
 
-    # async def shutdown(signal):
-    #     print(f"Received exit signal {signal.name}, closing loop...")
-    #     loop = asyncio.get_running_loop()
-    #     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    #     [task.cancel() for task in tasks]
-    #     await asyncio.gather(*tasks, return_exceptions=True)
-    #     loop.stop()
-    #
-    #
-    # loop = asyncio.get_event_loop()
-    # loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(shutdown(loop)))
-    # loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(shutdown(loop)))
+def test_alive2():
+    """ This tests for keep-aliver in the presence of its unique ID"""
+    async def test():
+        ns = await connect_to_nats("localhost:4222", "szakal")
+
+        msg = KeepAliver(ns.jetstream(), "stan.test_alive", timeout=20, unique_id="TEST6")
+        await msg.remove_all_past_messages()
+        await msg.keep_alive()
 
     asyncio.run(test())
 
 if __name__ == '__main__':
     # test_stream()
-    test_alive()
+    test_alive2()
     # list_all_tasks("nats://localhost:4222")
