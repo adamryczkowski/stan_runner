@@ -1,28 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import json
 import pickle
 import signal
-import socket
 import time
-import uuid
 from collections import deque
 
-import humanize
 import nats
-import netifaces
-from adams_text_utils import format_txt_list
 from nats.aio.msg import Msg
 from nats.js import JetStreamContext
-from nats.js.api import RawStreamMsg
-from nats.js.errors import NotFoundError
 
-from .ifaces import StanOutputScope, StanResultEngine
-from .nats_utils import STREAM_NAME, create_stream, connect_to_nats, WORKER_TIMEOUT_SECONDS
-from .worker_capacity_info import WorkerCapacityInfo
-
+from .nats_DTO_BrokerInfo import BrokerInfo
+from .nats_DTO_TaskInfo import TaskInfo
+from .nats_DTO_WorkerInfo import WorkerInfo
+from .nats_utils import STREAM_NAME, create_stream, connect_to_nats, WORKER_TIMEOUT_SECONDS, KeepAliver
 
 
 # This is a message broker.
@@ -45,162 +37,6 @@ from .worker_capacity_info import WorkerCapacityInfo
 # In future, broker will also learn how to predict the run time and memory requirements of the tasks. It will use this
 # information to decide which worker to send the task to.
 
-class BrokerInfo:
-    _broker_id: str
-    _last_seen: float
-    _hostname: str
-    _network_addresses: dict[str, list[str]]  # All the network interfaces and their addresses
-
-    @staticmethod
-    def CreateFromLocalHost():
-        last_seen = time.time()
-        hostname = socket.gethostname()
-        broker_id = "broker_" + str(uuid.uuid4())[0:8]
-
-        network_addresses = {}
-        for iface in netifaces.interfaces():
-            iface_addresses = netifaces.ifaddresses(iface)
-            if netifaces.AF_INET in iface_addresses:
-                for addr in iface_addresses[netifaces.AF_INET]:
-                    if addr["addr"] == "127.0.0.1":
-                        continue
-                    if addr["addr"][0:4] == "172.":
-                        continue
-                    if iface not in network_addresses:
-                        network_addresses[iface] = []
-                    network_addresses[iface].append(addr["addr"])
-
-        if "default" in netifaces.gateways():
-            default_gateway = netifaces.gateways()["default"]
-            if netifaces.AF_INET in default_gateway:
-                gateway_ip, iface = default_gateway[netifaces.AF_INET]
-                default_entry = network_addresses[iface]
-                # Put the default gateway first
-                del network_addresses[iface]
-                network_addresses = {iface: default_entry, **network_addresses}
-
-        return BrokerInfo(broker_id, last_seen, hostname, network_addresses)
-
-    @staticmethod
-    def CreateFromSerialized(serialized: bytes):
-        d = json.loads(serialized)
-        return BrokerInfo(**d)
-
-    def __init__(self, broker_id: str, last_seen: float, hostname: str, network_addresses: dict[str, list[str]]):
-        self._broker_id = broker_id
-        self._last_seen = last_seen
-        self._hostname = hostname
-        self._network_addresses = network_addresses
-
-    @property
-    def broker_id(self) -> str:
-        return self._broker_id
-
-    @property
-    def last_seen(self) -> float:
-        return self._last_seen
-
-    def update_last_seen(self):
-        self._last_seen = time.time()
-
-    def pretty_print(self):
-        ans = f"""Broker {self._broker_id} \"{self._hostname}\", last seen {humanize.naturaltime(datetime.datetime.fromtimestamp(time.time()) - datetime.datetime.fromtimestamp(self._last_seen))}, with network addresses:\n\n"""
-
-        ifaces = []
-        for iface, addresses in self._network_addresses.items():
-            ifaces.append(f"* {iface}: {format_txt_list(addresses, max_length=5)}")
-
-        return ans + "\n".join(ifaces)
-
-    def serialize(self) -> bytes:
-        d = {
-            "broker_id": self._broker_id,
-            "last_seen": self._last_seen,
-            "hostname": self._hostname,
-            "network_addresses": self._network_addresses
-        }
-
-        return json.dumps(d).encode()
-
-    def __repr__(self):
-        return self.pretty_print()
-
-
-class ModelInfo:
-    """Contains lazy methods for accessing the model's data, when required"""
-    _model_hash: str
-
-    def __init__(self, model_hash: str):
-        self._model_hash = model_hash
-
-
-class DataInfo:
-    """Contains lazy methods for accessing data, when required"""
-    _data_hash: str
-
-    def __init__(self, data_hash: str):
-        self._data_hash = data_hash
-
-
-class TaskInfo:
-    _task_hash: str
-    _model: ModelInfo
-    _data: DataInfo
-    _scope: StanOutputScope
-    _engine: StanResultEngine
-
-    def __init__(self, task_hash: str, model_hash: str, data_hash: str, scope: StanOutputScope,
-                 engine: StanResultEngine):
-        self._task_hash = task_hash
-        self._model = ModelInfo(model_hash)
-        self._data = DataInfo(data_hash)
-        self._scope = scope
-        self._engine = engine
-
-
-class WorkerInfo:
-    _capabilities: WorkerCapacityInfo
-    _worker_hash: str
-    _name: str
-    _models_compiled: set[str]
-    _last_seen: float
-
-    def can_handle_task(self, task: TaskInfo) -> bool:
-        return True
-
-    def __init__(self, capabilities: dict, worker_hash: str, name: str, models_compiled: set[str] = None):
-        self._capabilities = WorkerCapacityInfo(**capabilities)
-        self._worker_hash = worker_hash
-        self._name = name
-        self._models_compiled = models_compiled if models_compiled is not None else set()
-        self._last_seen = time.time()
-
-    @property
-    def worker_hash(self) -> str:
-        return self._worker_hash
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def capabilities(self) -> WorkerCapacityInfo:
-        return self._capabilities
-
-    def pretty_print(self):
-        return f"""Worker {self._worker_hash} \"{self._name}\", last seen {humanize.naturaltime(datetime.datetime.fromtimestamp(time.time()) - datetime.datetime.fromtimestamp(self._last_seen))}, with capabilities:
-{self._capabilities.pretty_print()}"""
-
-    @property
-    def last_seen(self) -> float:
-        return self._last_seen
-
-    def update_last_seen(self):
-        self._last_seen = time.time()
-
-    def __repr__(self):
-        return self.pretty_print()
-
 
 class MessageBroker:
     _server_context: JetStreamContext
@@ -209,6 +45,8 @@ class MessageBroker:
     _workers: dict[str, WorkerInfo]
     _tasks: dict[str, TaskInfo]
     _task_queue: deque[str]
+    _keep_aliver: KeepAliver
+    _keep_aliver_task: asyncio.Task | None
 
     _subscriptions: list | None
 
@@ -228,6 +66,12 @@ class MessageBroker:
         self._tasks = {}
         self._task_queue = deque()
         self._broker_id = BrokerInfo.CreateFromLocalHost()
+        self._keep_aliver = KeepAliver(self._server_context, "stan.broker.alive", timeout=WORKER_TIMEOUT_SECONDS,
+                                       unique_id=self._broker_id.broker_id,
+                                       serialized_content=self._broker_id.serialize(),
+                                       serialized_format="json")
+        self._keep_aliver_task = None
+
         print(self._broker_id.pretty_print())
 
     def prune_workers(self):
@@ -294,36 +138,6 @@ class MessageBroker:
         # If we are here, there were are no workers that can handle the task
         self._task_queue.appendleft(task_hash)
 
-    async def keep_alive(self):
-        while True:
-            print(f"Broker {self._broker_id} is alive")
-            try:
-                last_message: RawStreamMsg | None = await self._server_context.get_last_msg(stream_name=STREAM_NAME,
-                                                                                            subject="stan.broker.alive")
-            except nats.js.errors.NotFoundError:
-                last_message = None
-
-            if last_message is not None:
-                time_to_last_message = time.time() - float(last_message.headers["timestamp"])
-                if last_message.headers["broker_id"] != self._broker_id.broker_id:
-                    if time_to_last_message < WORKER_TIMEOUT_SECONDS:
-                        raise Exception(f"Broker id mismatch: {last_message.headers['broker_id']} != {self._broker_id}")
-            else:
-                time_to_last_message = float("inf")
-
-            if (time_to_wait := max(0, WORKER_TIMEOUT_SECONDS - time_to_last_message)) > 0:
-                await asyncio.sleep(time_to_wait)
-
-            broker_bin = self._broker_id.serialize()
-            if self._subscriptions is None:
-                break
-            await self._server_context.publish("stan.broker.alive", payload=broker_bin, stream=STREAM_NAME,
-                                               headers={"broker_id": self._broker_id.broker_id,
-                                                        "format": "json",
-                                                        "timestamp": str(float(time.time()))})
-            if last_message is not None:
-                await self._server_context.delete_msg(STREAM_NAME, last_message.seq)
-
     async def the_loop(self):
         # Attach the shutdown coroutine to SIGINT and SIGTERM
         loop = asyncio.get_running_loop()
@@ -335,32 +149,22 @@ class MessageBroker:
 
         self._subscriptions = [sub1, sub2]
 
-        await self.keep_alive()
+        self._keep_aliver_task = asyncio.create_task(self._keep_aliver.keep_alive())
 
-    async def shutdown(self, loop):
-        print("Unsubscribing...")
+    async def shutdown(self, bCloseNATS: bool = True):
+        print("Received exit signal, shutting down...")
+
+        print("Canceling the keep-aliver task...")
+        self._keep_aliver_task.cancel()
+        try:
+            await self._keep_aliver_task
+        except asyncio.CancelledError:
+            pass
+
+        print("Unsubscribing from events...")
         for s in self._subscriptions:
             await s.unsubscribe()
 
-        self._subscriptions = None
-
-        try:
-            last_message: RawStreamMsg | None = await self._server_context.get_last_msg(stream_name=STREAM_NAME,
-                                                                                        subject="stan.broker.alive")
-        except nats.js.errors.NotFoundError:
-            last_message = None
-
-        await asyncio.sleep(0)  # Yield to other tasks to finish
-
-        print("Removing broadcast message...")
-        if last_message is not None:
-            await self._server_context.delete_msg(STREAM_NAME, last_message.seq)
-
-        print("Received exit signal, shutting down...")
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-
-        print(f"Cancelling {len(tasks)} tasks")
-        [task.cancel() for task in tasks]
-
-        await asyncio.gather(*tasks, return_exceptions=True)
-        loop.stop()
+        if bCloseNATS:
+            print("Closing the NATS connection...")
+            await self._server_raw.close()

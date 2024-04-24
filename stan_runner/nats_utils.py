@@ -132,7 +132,7 @@ class KeepAliver:
     _last_msg_seq: int | None
 
     @staticmethod
-    async def Create(self, js: JetStreamContext, subject: str, timeout: float = 60., unique_id: str = None,
+    async def Create(js: JetStreamContext, subject: str, timeout: float = 60., unique_id: str = None,
                      serialized_content: bytes = None, serialized_format: str = "json") -> KeepAliver:
         obj = KeepAliver(js, subject, timeout, unique_id, serialized_content, serialized_format)
         await obj.remove_all_past_messages()
@@ -170,6 +170,9 @@ class KeepAliver:
                 continue
             await self._js.delete_msg(STREAM_NAME, seq)
 
+    async def shutdown(self):
+        if self._last_msg_seq is not None:
+            await self._js.delete_msg(STREAM_NAME, self._last_msg_seq)
     async def keep_alive(self):
         """Send a keep-alive message to the NATS server."""
         try:
@@ -205,5 +208,6 @@ class KeepAliver:
                     self._last_msg_seq = ack.seq
         except asyncio.CancelledError:
             print("Canceling keep-alive message...")
-            if self._last_msg_seq is not None:
-                await self._js.delete_msg(STREAM_NAME, self._last_msg_seq)
+            await self.shutdown()
+
+

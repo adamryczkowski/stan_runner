@@ -6,6 +6,17 @@ import concurrent.futures
 import math
 import json
 from adams_text_utils import human_readable_size
+import datetime
+import socket
+import time
+
+import humanize
+import netifaces
+from adams_text_utils import format_txt_list
+from overrides import overrides
+
+from .nats_DTO import SerializableObjectInfo
+
 
 
 class WorkerCapacityInfo:
@@ -17,7 +28,8 @@ class WorkerCapacityInfo:
     _cpu_benchmark_at: float  # All threads
 
     @staticmethod
-    def CreateFromSerialized(data: bytes) -> WorkerCapacityInfo:
+    def CreateFromSerialized(data: bytes, format:str) -> WorkerCapacityInfo:
+        assert format == "json"
         d = json.loads(data)
         return WorkerCapacityInfo(**d)
 
@@ -75,8 +87,9 @@ class WorkerCapacityInfo:
         print(f"CPU benchmark (single-threaded): {self.cpu_benchmark_st:.2f} iterations/s")
         print(f"CPU benchmark (all threads): {self.cpu_benchmark_at:.2f} iterations/s")
 
-    def serialize(self)->bytes:
-        d = {
+
+    def __getstate__(self) -> dict:
+        return {
             "total_mem": self.total_mem,
             "free_mem": self.free_mem,
             "total_cores": self.total_cores,
@@ -84,6 +97,17 @@ class WorkerCapacityInfo:
             "cpu_benchmark_st": self.cpu_benchmark_st,
             "cpu_benchmark_at": self.cpu_benchmark_at
         }
+
+    def __setstate__(self, state:dict):
+        self._total_mem = state["total_mem"]
+        self._free_mem = state["free_mem"]
+        self._total_cores = state["total_cores"]
+        self._disk_free = state["disk_free"]
+        self._cpu_benchmark_st = state["cpu_benchmark_st"]
+        self._cpu_benchmark_at = state["cpu_benchmark_at"]
+
+    def serialize(self)->bytes:
+        d = self.__getstate__()
         return json.dumps(d).encode()
 
     def __repr__(self):
