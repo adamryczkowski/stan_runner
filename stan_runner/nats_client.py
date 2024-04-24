@@ -16,14 +16,13 @@ from overrides import overrides
 
 from .cmdstan_runner import InferenceResult
 from .ifaces import StanOutputScope, IInferenceResult, StanErrorType, IStanRunner, StanResultEngine
-from .nats_utils import create_stream, name_topic_datadef, name_topic_modeldef, name_topic_run, STREAM_NAME
+from .nats_utils import create_stream, name_topic_datadef, name_topic_modeldef, name_topic_run, STREAM_NAME, \
+    connect_to_nats
 from .utils import infer_param_shapes, normalize_stan_model_by_str
 
 
-
 class RemoteStanRunner(IStanRunner):
-    _server_context: JetStreamContext | None
-    _server_stream: StreamInfo | None
+    _js: JetStreamContext
     _normalize_code: bool
 
     _stan_model: str | Path | None
@@ -35,7 +34,16 @@ class RemoteStanRunner(IStanRunner):
 
     _kwargs: dict
 
-    def __init__(self, server_url: str, user: str, password: str,
+    @staticmethod
+    async def Create(server_url: str, user: str, password: str,
+                     sig_figs: int = None, output_type: StanOutputScope = StanOutputScope.RawOutput,
+                     normalize_code: bool = True) -> RemoteStanRunner:
+        ns = await connect_to_nats(server_url, user, password)
+        js, _ = await create_stream(ns, permanent_storage=True, stream_name=STREAM_NAME)
+        return RemoteStanRunner(server_url, js, sig_figs, output_type, normalize_code)
+
+
+    def __init__(self, server_url: str, ns: JetStreamContext,
                  sig_figs: int = None, output_type: StanOutputScope = StanOutputScope.RawOutput,
                  normalize_code: bool = True):
 
@@ -47,12 +55,6 @@ class RemoteStanRunner(IStanRunner):
 
         self._normalize_code = normalize_code
 
-        self._server_url = server_url
-
-        self._server_context, self._server_stream = create_stream(server_url, permanent_storage=True,
-                                                                  stream_name=STREAM_NAME,
-                                                                  user=user, password=password)
-
         self._sig_figs = sig_figs
 
         self._stan_model = None
@@ -61,6 +63,7 @@ class RemoteStanRunner(IStanRunner):
         self._kwargs = {}
 
         self._output_type = output_type
+
 
     @overrides
     def load_model_by_file(self, stan_file: str | Path, model_name: str | None = None, pars_list: list[str] = None):
@@ -220,7 +223,7 @@ class RemoteStanRunner(IStanRunner):
         if not self.is_data_set:
             raise ValueError("No data loaded")
 
-        engine:StanResultEngine = run_opts["engine"]
+        engine: StanResultEngine = run_opts["engine"]
         args = run_opts["args"]
 
         run_dict = {"model_hash": self.model_hash, "data_hash": self.data_hash, "run_opts": args, "engine": str(engine)}
@@ -309,7 +312,7 @@ class RemoteStanRunner(IStanRunner):
         ans = {"num_chains": num_chains, "iter_sampling": iter_sampling,
                "iter_warmup": iter_warmup, "thin": thin, "max_treedepth": max_treedepth,
                "seed": seed, "inits": inits, **kwargs}
-        return {"engine":  StanResultEngine.MCMC, "args": ans}
+        return {"engine": StanResultEngine.MCMC, "args": ans}
 
     @overrides
     def sampling(self, num_chains: int, iter_sampling: int = None,
@@ -543,7 +546,7 @@ class InferenceResultMainEffects(IInferenceResult):
         return StanOutputScope.MainEffects
 
     @overrides
-    def serialize(self, output_scope: StanOutputScope)->bytes:
+    def serialize(self, output_scope: StanOutputScope) -> bytes:
         raise NotImplementedError
 
     @overrides
