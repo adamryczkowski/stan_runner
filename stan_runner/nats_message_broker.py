@@ -12,7 +12,7 @@ from nats.aio.msg import Msg
 from nats.js import JetStreamContext
 
 from .nats_DTO_BrokerInfo import BrokerInfo
-from .nats_DTO_TaskInfo import TaskInfo
+from .nats_TaskInfo import TaskInfo
 from .nats_DTO_WorkerInfo import WorkerInfo
 from .nats_utils import STREAM_NAME, create_stream, connect_to_nats, WORKER_TIMEOUT_SECONDS, KeepAliver
 
@@ -56,7 +56,11 @@ class MessageBroker:
     async def Create(server_url: str, user: str, password: str = None):
         nc = await connect_to_nats(nats_connection=server_url, user=user, password=password)
         js, stream = await create_stream(nc, permanent_storage=True, stream_name=STREAM_NAME)
-        return MessageBroker(nc, js)
+        broker = MessageBroker(nc, js)
+
+
+    async def check_for_network_duplicates(self):
+        await self._keep_aliver.check_for_network_duplicates()
 
     def __init__(self, nc: nats.NATS, js: JetStreamContext):
         self._server_raw = nc
@@ -151,7 +155,7 @@ class MessageBroker:
 
         self._keep_aliver_task = asyncio.create_task(self._keep_aliver.keep_alive())
 
-    async def shutdown(self, bCloseNATS: bool = True):
+    async def shutdown(self, bCloseNATS: bool = False):
         print("Received exit signal, shutting down...")
 
         print("Canceling the keep-aliver task...")

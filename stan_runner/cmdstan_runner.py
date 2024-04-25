@@ -15,7 +15,7 @@ import jsonpickle
 import numpy as np
 from overrides import overrides
 
-from .ifaces import StanErrorType, IStanRunner, IInferenceResult
+from .ifaces import StanErrorType, IStanRunner, ILocalInferenceResult
 from .result_adapter import InferenceResult
 from .utils import find_model_in_cache, normalize_stan_model_by_file
 
@@ -286,7 +286,7 @@ class CmdStanRunner(IStanRunner):
     @overrides
     def sampling(self, num_chains: int, iter_sampling: int = None,
                  iter_warmup: int = None, thin: int = 1, max_treedepth: int = None,
-                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> IInferenceResult:
+                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> ILocalInferenceResult:
 
         assert self.is_model_compiled
 
@@ -320,7 +320,7 @@ class CmdStanRunner(IStanRunner):
         return out
 
     @overrides
-    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
+    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> ILocalInferenceResult:
 
         assert self.is_model_compiled
 
@@ -345,7 +345,7 @@ class CmdStanRunner(IStanRunner):
         return out
 
     @overrides
-    def pathfinder(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
+    def pathfinder(self, output_samples: int = 1000, **kwargs) -> ILocalInferenceResult:
         assert self.is_model_compiled
 
         stdout = io.StringIO()
@@ -370,7 +370,7 @@ class CmdStanRunner(IStanRunner):
         return out
 
     @overrides
-    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
+    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> ILocalInferenceResult:
         assert self.is_model_compiled
 
         stdout = io.StringIO()

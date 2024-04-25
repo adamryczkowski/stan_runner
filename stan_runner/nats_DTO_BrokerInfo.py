@@ -70,3 +70,11 @@ class BrokerInfo(SerializableObjectInfo):
         super().__set_state__(state)
         self._hostname = state["hostname"]
         self._network_addresses = state["network_addresses"]
+
+    @property
+    def hostname(self):
+        return self._hostname
+
+    @property
+    def network_addresses(self):
+        return self._network_addresses

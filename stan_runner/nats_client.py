@@ -15,7 +15,7 @@ from nats.js.api import StreamInfo, RawStreamMsg
 from overrides import overrides
 
 from .cmdstan_runner import InferenceResult
-from .ifaces import StanOutputScope, IInferenceResult, StanErrorType, IStanRunner, StanResultEngine
+from .ifaces import StanOutputScope, ILocalInferenceResult, StanErrorType, IStanRunner, StanResultEngine
 from .nats_utils import create_stream, name_topic_datadef, name_topic_modeldef, name_topic_run, STREAM_NAME, \
     connect_to_nats
 from .utils import infer_param_shapes, normalize_stan_model_by_str
@@ -254,7 +254,7 @@ class RemoteStanRunner(IStanRunner):
         loop.run_until_complete(close())
         return run_hash
 
-    def _wait_for_result(self, run_hash: str, timeout: int = None) -> tuple[dict, IInferenceResult | None]:
+    def _wait_for_result(self, run_hash: str, timeout: int = None) -> tuple[dict, ILocalInferenceResult | None]:
         """
         Waits for the result of the run
         """
@@ -317,7 +317,7 @@ class RemoteStanRunner(IStanRunner):
     @overrides
     def sampling(self, num_chains: int, iter_sampling: int = None,
                  iter_warmup: int = None, thin: int = 1, max_treedepth: int = None,
-                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> IInferenceResult:
+                 seed: int = None, inits: dict[str, Any] | float | list[str] = None) -> ILocalInferenceResult:
         """
         Sends the request to sample, and waits for the results.
         """
@@ -335,7 +335,7 @@ class RemoteStanRunner(IStanRunner):
         return {"engine": StanResultEngine.VB, "args": ans}
 
     @overrides
-    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
+    def variational_bayes(self, output_samples: int = 1000, **kwargs) -> ILocalInferenceResult:
         opts = self._serialize_variational_bayes_optons(output_samples=output_samples, **kwargs)
         run_hash = self._get_run(opts)
 
@@ -350,7 +350,7 @@ class RemoteStanRunner(IStanRunner):
         return {"engine": StanResultEngine.PATHFINDER, "args": ans}
 
     @overrides
-    def pathfinder(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
+    def pathfinder(self, output_samples: int = 1000, **kwargs) -> ILocalInferenceResult:
         opts = self._serialize_pathfinder_optons(output_samples, **kwargs)
         run_hash = self._get_run(opts)
 
@@ -365,7 +365,7 @@ class RemoteStanRunner(IStanRunner):
         return {"engine": StanResultEngine.LAPLACE, "args": ans}
 
     @overrides
-    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> IInferenceResult:
+    def laplace_sample(self, output_samples: int = 1000, **kwargs) -> ILocalInferenceResult:
         opts = self._serialize_laplace_optons(output_samples, **kwargs)
         run_hash = self._get_run(opts)
 
@@ -376,7 +376,7 @@ class RemoteStanRunner(IStanRunner):
         return result
 
 
-class DelayedInferenceResult(IInferenceResult):
+class DelayedInferenceResult(ILocalInferenceResult):
     _messageID: str
     _hatchet: Hatchet
 
@@ -385,7 +385,7 @@ class DelayedInferenceResult(IInferenceResult):
         self._messageID = messageID
         self._hatchet = hatchet
 
-    def wait(self, timeout: int = None) -> dict[str, dict[str, IInferenceResult]] | None:
+    def wait(self, timeout: int = None) -> dict[str, dict[str, ILocalInferenceResult]] | None:
         if timeout is not None:
             raise NotImplementedError
         from hatchet_sdk import StepRunEventType
@@ -487,7 +487,7 @@ class DelayedInferenceResult(IInferenceResult):
 # def get_result(self) -> IInferenceResult:
 
 
-class InferenceResultMainEffects(IInferenceResult):
+class InferenceResultMainEffects(ILocalInferenceResult):
     _vars: dict[str, IValueWithError]
     _result_type: StanResultEngine
     _param_shapes: dict[str, tuple[int, ...]]
@@ -707,6 +707,6 @@ class RemoteInferenceResultPromise:
 
         return False
 
-    def wait(self, timeout: int = None) -> IInferenceResult | None:
+    def wait(self, timeout: int = None) -> ILocalInferenceResult | None:
         # TODO
         pass

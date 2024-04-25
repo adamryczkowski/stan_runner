@@ -11,7 +11,7 @@ from overrides import overrides
 
 from .ifaces import StanResultEngine
 from .cmdstan_runner import InferenceResult
-from .ifaces import StanOutputScope, IInferenceResult
+from .ifaces import StanOutputScope, ILocalInferenceResult
 from .utils import infer_param_shapes
 
 
@@ -229,7 +229,7 @@ class DelayedInferenceResult:
         self._messageID = messageID
         self._hatchet = hatchet
 
-    def wait(self, timeout: int = None) -> dict[str, dict[str, IInferenceResult]] | None:
+    def wait(self, timeout: int = None) -> dict[str, dict[str, ILocalInferenceResult]] | None:
         if timeout is not None:
             raise NotImplementedError
         from hatchet_sdk import StepRunEventType
@@ -331,7 +331,7 @@ class DelayedInferenceResult:
 # def get_result(self) -> IInferenceResult:
 
 
-class InferenceResultMainEffects(IInferenceResult):
+class InferenceResultMainEffects(ILocalInferenceResult):
     _vars: dict[str, IValueWithError]
     _result_type: StanResultEngine
     _param_shapes: dict[str, tuple[int, ...]]
@@ -551,6 +551,6 @@ class RemoteInferenceResultPromise:
 
         return False
 
-    def wait(self, timeout: int = None) -> IInferenceResult | None:
+    def wait(self, timeout: int = None) -> ILocalInferenceResult | None:
         # TODO
         pass

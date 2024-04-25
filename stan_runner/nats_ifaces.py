@@ -3,6 +3,22 @@ from abc import ABC, abstractmethod
 from typing import Type
 
 
+class NetworkDuplicateError(Exception):
+    _other_object_id: str
+
+    def __init__(self, other_object_id: str, message:str = None):
+        if message is not None:
+            super().__init__(message)
+        else:
+            super().__init__(f"Id mismatch: {other_object_id}")
+        self._other_object_id = other_object_id
+
+    @property
+    def other_object_id(self):
+        return self._other_object_id
+
+
+
 class ISerializableObjectInfo(ABC):
     """Base class for every object that is trasfered by wire"""
 

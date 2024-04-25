@@ -19,13 +19,13 @@ from cmdstanpy.stanfit.vb import RunSet
 from overrides import overrides
 
 from .utils import make_dict_serializable, serialize_to_bytes
-from .ifaces import IInferenceResult, StanResultEngine, StanOutputScope
+from .ifaces import ILocalInferenceResult, StanResultEngine, StanOutputScope
 
 _fallback = json._default_encoder.default
 json._default_encoder.default = lambda obj: getattr(obj.__class__, "to_json", _fallback)(obj)
 
 
-class InferenceResult(IInferenceResult):
+class InferenceResult(ILocalInferenceResult):
     _result: CmdStanLaplace | CmdStanVB | CmdStanMCMC | CmdStanPathfinder | None
     _messages: dict[str, str] | None = None
     _draws: np.ndarray | None
