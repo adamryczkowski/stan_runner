@@ -41,7 +41,7 @@ class SerializableObjectInfo(ISerializableObjectInfo):
 
     @overrides
     def serialize(self, format: str = "pickle") -> bytes:
-        d = make_dict_serializable(self.__get_state__())
+        d = make_dict_serializable(self.__getstate__())
         if format == "json":
             return json.dumps(d).encode("utf-8")
         elif format == "pickle":

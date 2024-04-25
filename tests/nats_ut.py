@@ -2,10 +2,11 @@
 #
 # It runs a NATS server in a separate thread.
 
-import asyncio
 from asyncio.subprocess import Process
+
+from nats.js.errors import NotFoundError
+
 from stan_runner import *
-import json
 
 
 async def run_the_server() -> Process:
@@ -20,7 +21,7 @@ async def run_the_server() -> Process:
     return proc
 
 
-async def test_setup()->tuple[Process, nats.NATS, JetStreamContext]:
+async def test_setup() -> tuple[Process, nats.NATS, JetStreamContext]:
     proc = await run_the_server()
 
     nc = await connect_to_nats("localhost:4222", "szakal")
@@ -30,25 +31,25 @@ async def test_setup()->tuple[Process, nats.NATS, JetStreamContext]:
 
     return proc, nc, js
 
+
 async def test_broker():
     server, nc, js = await test_setup()
 
     broker = await MessageBroker.Create("localhost:4222", "szakal")
 
-    broker_task = asyncio.create_task(broker.keep_alive())
+    broker_task = asyncio.create_task(broker.the_loop())
 
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(1)
 
     # Test for the keep-alive message
     last_message = await js.get_last_msg(STREAM_NAME, "stan.broker.alive")
     assert last_message is not None
     assert last_message.headers["format"] in {"json", "pickle"}
-    assert last_message.headers["id"] == broker._broker_id.broker_id
+    assert last_message.headers["id"] == broker._broker_id.object_id
     assert last_message.data is not None
 
-
-    broker_info = BrokerInfo.CreateFromSerialized(last_message.data, last_message.headers["format"])
-    assert broker_info.object_id == broker._broker_id
+    broker_info = BrokerInfo.CreateFromSerialized(last_message.data, BrokerInfo, last_message.headers["format"])
+    assert broker_info.object_id == broker._broker_id.object_id
     print(broker_info.pretty_print())
 
     try:
@@ -56,20 +57,29 @@ async def test_broker():
         await broker2.check_for_network_duplicates()
 
     except NetworkDuplicateError as e:
-        assert e.other_object_id == broker._broker_id.broker_id
+        assert e.other_object_id == broker._broker_id.object_id
 
     await broker.shutdown()
-    await asyncio.wait_for(broker_task, 0.1) # Will raise an exception if broker did not shut down in 0.1 second
+    await asyncio.wait_for(broker_task, 0.1)  # Will raise an exception if broker did not shut down in 0.1 second
 
-    broker_info = BrokerInfo.CreateFromSerialized(last_message.data, last_message.headers["format"])
-    assert broker_info in None # After a peaceful shutdown, there should be no leftovers
+    try:
+        last_message = await js.get_last_msg(STREAM_NAME, "stan.broker.alive")
+    except nats.js.errors.NotFoundError:
+        last_message = None
+
+    assert last_message is None
 
     await teardown(server, nc)
 
+
 async def teardown(proc: Process, nc: nats.NATS):
     await nc.close()
-    proc.terminate()
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
 
 
-def setup():
-    asyncio.run(run_the_server())
+
+if __name__ == '__main__':
+    asyncio.run(test_broker(), debug=True)

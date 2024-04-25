@@ -22,18 +22,21 @@ class NetworkDuplicateError(Exception):
 class ISerializableObjectInfo(ABC):
     """Base class for every object that is trasfered by wire"""
 
-    @abstractmethod
     @staticmethod
+    @abstractmethod
     def CreateFromSerialized(serialized: bytes, object_type: Type[ISerializableObjectInfo],
                              format: str = "pickle") -> ISerializableObjectInfo:
         ...
+
+    def __init__(self):
+        super().__init__()
 
     @abstractmethod
     def serialize(self, format: str = "pickle") -> bytes:
         ...
 
-    @abstractmethod
     @property
+    @abstractmethod
     def object_id(self) -> str:
         ...
 
@@ -41,21 +44,22 @@ class ISerializableObjectInfo(ABC):
     def pretty_print(self) -> str:
         ...
 
-    @abstractmethod
     @property
+    @abstractmethod
     def timestamp(self) -> float:
         ...
 
     @abstractmethod
-    def __get_state__(self) -> dict:
+    def __getstate__(self) -> dict:
         ...
 
     @abstractmethod
-    def __set_state__(self, state: dict):
+    def __setstate__(self, state: dict):
         ...
 
     def __repr__(self):
         return self.pretty_print()
+
 
     @abstractmethod
     def update_last_seen(self):

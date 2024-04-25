@@ -96,6 +96,211 @@ class StanOutputScope(Enum):
             raise ValueError(f"Unknown StanOutputScope: {self}")
 
 
+class IInferenceResult(ABC):
+    @property
+    @abstractmethod
+    async def is_error(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
+    def runtime(self) -> timedelta | None:
+        ...
+
+    @property
+    @abstractmethod
+    async def one_dim_parameters_count(self) -> int:
+        ...
+
+    async def get_onedim_parameter_names(self, user_parameter_name: str) -> list[str]:
+        ...
+
+    @property
+    @abstractmethod
+    def result_type(self) -> StanResultEngine:
+        ...
+
+    @property
+    @abstractmethod
+    def result_scope(self) -> StanOutputScope:
+        ...
+
+    @property
+    @abstractmethod
+    def user_parameters(self) -> list[str]:
+        ...
+
+    @property
+    @abstractmethod
+    def onedim_parameters(self) -> list[str]:
+        ...
+
+    @abstractmethod
+    def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
+        ...
+
+    @abstractmethod
+    async def sample_count(self, onedim_parameter_name: str = None) -> float | int | None:
+        ...
+
+    @abstractmethod
+    async def draws(self, incl_raw: bool = True) -> np.ndarray|None:
+        ...
+
+    @abstractmethod
+    async def get_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> IValueWithError:
+        ...
+
+    @abstractmethod
+    async def get_parameter_mu(self, user_parameter_name: str) -> np.ndarray:
+        ...
+
+    @abstractmethod
+    async def get_parameter_sigma(self, user_parameter_name: str) -> np.ndarray:
+        ...
+
+    @abstractmethod
+    async def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
+        ...
+
+    @abstractmethod
+    async def all_main_effects(self) -> dict[str, IValueWithError]:
+        ...
+
+    @abstractmethod
+    async def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
+        ...
+
+    async def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
+        cov_matrix, one_dim_names = await self.get_cov_matrix(user_parameter_names)
+        out = prettytable.PrettyTable()
+        out.field_names = [""] + one_dim_names
+
+        # Calculate the smallest standard error of variances
+        factor = np.sqrt(0.5 / (self.sample_count() - 1))
+        se = np.sqrt(min(np.diag(cov_matrix))) * factor
+        digits = int(np.ceil(-np.log10(se))) + 1
+
+        cov_matrix_txt = np.round(cov_matrix, digits)
+
+        for i in range(len(one_dim_names)):
+            # Suppres scientific notation
+            out.add_row([one_dim_names[i]] + [f"{cov_matrix_txt[i, j]:.4f}" for j in range(len(one_dim_names))])
+        return str(out)
+
+    async def repr_with_sampling_errors(self):
+        # Table example:
+        #         mean   se_mean       sd       10%      90%
+        # mu  7.751103 0.1113406 5.199004 1.3286256 14.03575
+        # tau 6.806410 0.1785522 6.044944 0.9572097 14.48271
+        out = self.method_name + "\n"
+
+        out += self.formatted_runtime() + "\n"
+
+        table = prettytable.PrettyTable()
+        table.field_names = ["Parameter", "index", "mu", "sigma", "10%", "90%"]
+        for par in self.user_parameters:
+            dims = self.get_parameter_shape(par)
+            if len(dims) == 0 or (len(dims) == 1 and dims[0] == 1):
+                par_name = par
+                par_value = await self.get_parameter_estimate(par_name)
+                ci = par_value.get_CI(0.8)
+                table.add_row([par_name, "", str(par_value.estimateMean()), str(par_value.estimateSE()),
+                               str(ci.pretty_lower), str(ci.pretty_upper)])
+            else:
+                max_idx = math.prod(dims)
+                idx = [0 for _ in dims]
+                i = 0
+                par_txt = par
+                while i < max_idx:
+                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
+                    par_name = f"{par}{idx_txt}"
+                    par_value = await self.get_parameter_estimate(par_name)
+                    ci = par_value.get_CI(0.8)
+                    table.add_row([par_txt, idx_txt, str(par_value.estimateMean()), str(par_value.estimateSE()),
+                                   str(ci.pretty_lower), str(ci.pretty_upper)])
+                    par_txt = ""
+                    i += 1
+                    idx[-1] += 1
+                    for j in range(len(dims) - 1, 0, -1):
+                        if idx[j] >= dims[j]:
+                            idx[j] = 0
+                            idx[j - 1] += 1
+
+        return out + str(table)
+
+    @property
+    @abstractmethod
+    def method_name(self) -> str:
+        ...
+
+    async def repr_without_sampling_errors(self):
+        # Table example:
+        #        value        10%      90%
+        # mu  7.751103  1.3286256 14.03575
+        # tau 6.806410  0.9572097 14.48271
+        out = self.method_name + "\n"
+
+        out += self.formatted_runtime() + "\n"
+
+        table = prettytable.PrettyTable()
+        table.field_names = ["Parameter", "index", "value", "10%", "90%"]
+        for par in self.user_parameters:
+            dims = self.get_parameter_shape(par)
+            if len(dims) == 0:
+                par_name = par
+                par_value = await self.get_parameter_estimate(par_name)
+                ci = par_value.get_CI(0.8)
+                table.add_row([par_name, "", str(par_value),
+                               str(ci.pretty_lower), str(ci.pretty_upper)])
+            else:
+                max_idx = math.prod(dims)
+                idx = [0 for _ in dims]
+                i = 0
+                par_txt = par
+                while i < max_idx:
+                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
+                    par_name = f"{par}{idx_txt}"
+                    par_value = await self.get_parameter_estimate(par_name)
+                    ci = par_value.get_CI(0.8)
+                    table.add_row([par_txt, idx_txt, str(par_value),
+                                   str(ci.pretty_lower), str(ci.pretty_upper)])
+                    par_txt = ""
+                    i += 1
+                    idx[-1] += 1
+                    for j in range(len(dims) - 1, 0, -1):
+                        if idx[j] >= dims[j]:
+                            idx[j] = 0
+                            idx[j - 1] += 1
+
+        return out + str(table)
+
+    def formatted_runtime(self) -> str:
+        if self.runtime is None:
+            return "Run time: not available"
+        else:
+            return f"Run taken: {humanize.precisedelta(self.runtime)}"
+
+    @property
+    @abstractmethod
+    def is_computed(self) -> bool:
+        ...
+
+    @abstractmethod
+    async def get_progress(self) -> tuple[str, list[float]]:
+        """Gets progress: each item in the list is a progress of a particular chain.
+        First tuple element is the description of the phase.
+        """
+        ...
+
+
+    def __repr__(self):
+        if self.sample_count is None:
+            return self.repr_without_sampling_errors()
+        else:
+            return self.repr_with_sampling_errors()
+
+
 class ILocalInferenceResult(IInferenceResult):
     _runtime: timedelta | None
     _messages: dict[str, str] | None = None
@@ -332,211 +537,6 @@ class ILocalInferenceResult(IInferenceResult):
     @abstractmethod
     def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
         ...
-
-
-class IInferenceResult(ABC):
-    @property
-    @abstractmethod
-    async def is_error(self) -> bool:
-        ...
-
-    @property
-    @abstractmethod
-    def runtime(self) -> timedelta | None:
-        ...
-
-    @property
-    @abstractmethod
-    async def one_dim_parameters_count(self) -> int:
-        ...
-
-    async def get_onedim_parameter_names(self, user_parameter_name: str) -> list[str]:
-        ...
-
-    @property
-    @abstractmethod
-    def result_type(self) -> StanResultEngine:
-        ...
-
-    @property
-    @abstractmethod
-    def result_scope(self) -> StanOutputScope:
-        ...
-
-    @property
-    @abstractmethod
-    def user_parameters(self) -> list[str]:
-        ...
-
-    @property
-    @abstractmethod
-    def onedim_parameters(self) -> list[str]:
-        ...
-
-    @abstractmethod
-    def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
-        ...
-
-    @abstractmethod
-    async def sample_count(self, onedim_parameter_name: str = None) -> float | int | None:
-        ...
-
-    @abstractmethod
-    async def draws(self, incl_raw: bool = True) -> np.ndarray|None:
-        ...
-
-    @abstractmethod
-    async def get_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> IValueWithError:
-        ...
-
-    @abstractmethod
-    async def get_parameter_mu(self, user_parameter_name: str) -> np.ndarray:
-        ...
-
-    @abstractmethod
-    async def get_parameter_sigma(self, user_parameter_name: str) -> np.ndarray:
-        ...
-
-    @abstractmethod
-    async def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
-        ...
-
-    @abstractmethod
-    async def all_main_effects(self) -> dict[str, IValueWithError]:
-        ...
-
-    @abstractmethod
-    async def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
-        ...
-
-    async def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
-        cov_matrix, one_dim_names = await self.get_cov_matrix(user_parameter_names)
-        out = prettytable.PrettyTable()
-        out.field_names = [""] + one_dim_names
-
-        # Calculate the smallest standard error of variances
-        factor = np.sqrt(0.5 / (self.sample_count() - 1))
-        se = np.sqrt(min(np.diag(cov_matrix))) * factor
-        digits = int(np.ceil(-np.log10(se))) + 1
-
-        cov_matrix_txt = np.round(cov_matrix, digits)
-
-        for i in range(len(one_dim_names)):
-            # Suppres scientific notation
-            out.add_row([one_dim_names[i]] + [f"{cov_matrix_txt[i, j]:.4f}" for j in range(len(one_dim_names))])
-        return str(out)
-
-    async def repr_with_sampling_errors(self):
-        # Table example:
-        #         mean   se_mean       sd       10%      90%
-        # mu  7.751103 0.1113406 5.199004 1.3286256 14.03575
-        # tau 6.806410 0.1785522 6.044944 0.9572097 14.48271
-        out = self.method_name + "\n"
-
-        out += self.formatted_runtime() + "\n"
-
-        table = prettytable.PrettyTable()
-        table.field_names = ["Parameter", "index", "mu", "sigma", "10%", "90%"]
-        for par in self.user_parameters:
-            dims = self.get_parameter_shape(par)
-            if len(dims) == 0 or (len(dims) == 1 and dims[0] == 1):
-                par_name = par
-                par_value = await self.get_parameter_estimate(par_name)
-                ci = par_value.get_CI(0.8)
-                table.add_row([par_name, "", str(par_value.estimateMean()), str(par_value.estimateSE()),
-                               str(ci.pretty_lower), str(ci.pretty_upper)])
-            else:
-                max_idx = math.prod(dims)
-                idx = [0 for _ in dims]
-                i = 0
-                par_txt = par
-                while i < max_idx:
-                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
-                    par_name = f"{par}{idx_txt}"
-                    par_value = await self.get_parameter_estimate(par_name)
-                    ci = par_value.get_CI(0.8)
-                    table.add_row([par_txt, idx_txt, str(par_value.estimateMean()), str(par_value.estimateSE()),
-                                   str(ci.pretty_lower), str(ci.pretty_upper)])
-                    par_txt = ""
-                    i += 1
-                    idx[-1] += 1
-                    for j in range(len(dims) - 1, 0, -1):
-                        if idx[j] >= dims[j]:
-                            idx[j] = 0
-                            idx[j - 1] += 1
-
-        return out + str(table)
-
-    @property
-    @abstractmethod
-    def method_name(self) -> str:
-        ...
-
-    async def repr_without_sampling_errors(self):
-        # Table example:
-        #        value        10%      90%
-        # mu  7.751103  1.3286256 14.03575
-        # tau 6.806410  0.9572097 14.48271
-        out = self.method_name + "\n"
-
-        out += self.formatted_runtime() + "\n"
-
-        table = prettytable.PrettyTable()
-        table.field_names = ["Parameter", "index", "value", "10%", "90%"]
-        for par in self.user_parameters:
-            dims = self.get_parameter_shape(par)
-            if len(dims) == 0:
-                par_name = par
-                par_value = await self.get_parameter_estimate(par_name)
-                ci = par_value.get_CI(0.8)
-                table.add_row([par_name, "", str(par_value),
-                               str(ci.pretty_lower), str(ci.pretty_upper)])
-            else:
-                max_idx = math.prod(dims)
-                idx = [0 for _ in dims]
-                i = 0
-                par_txt = par
-                while i < max_idx:
-                    idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
-                    par_name = f"{par}{idx_txt}"
-                    par_value = await self.get_parameter_estimate(par_name)
-                    ci = par_value.get_CI(0.8)
-                    table.add_row([par_txt, idx_txt, str(par_value),
-                                   str(ci.pretty_lower), str(ci.pretty_upper)])
-                    par_txt = ""
-                    i += 1
-                    idx[-1] += 1
-                    for j in range(len(dims) - 1, 0, -1):
-                        if idx[j] >= dims[j]:
-                            idx[j] = 0
-                            idx[j - 1] += 1
-
-        return out + str(table)
-
-    def formatted_runtime(self) -> str:
-        if self.runtime is None:
-            return "Run time: not available"
-        else:
-            return f"Run taken: {humanize.precisedelta(self.runtime)}"
-
-    @abstractmethod
-    @property
-    def is_computed(self) -> bool:
-        ...
-
-    @abstractmethod
-    async def get_progress(self) -> tuple[str, list[float]]:
-        """Gets progress: each item in the list is a progress of a particular chain.
-        First tuple element is the description of the phase.
-        """
-        ...
-
-
-    def __repr__(self):
-        if self.sample_count is None:
-            return self.repr_without_sampling_errors()
-        else:
-            return self.repr_with_sampling_errors()
 
 
 

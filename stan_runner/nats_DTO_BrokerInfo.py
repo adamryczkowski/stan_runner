@@ -49,7 +49,7 @@ class BrokerInfo(SerializableObjectInfo):
         self._network_addresses = network_addresses
 
     @overrides
-    def pretty_print(self):
+    def pretty_print(self)->str:
         ans = f"""Broker {self.object_id} \"{self._hostname}\", last seen {humanize.naturaltime(datetime.datetime.fromtimestamp(time.time()) - datetime.datetime.fromtimestamp(self.timestamp))}, with network addresses:\n\n"""
 
         ifaces = []
@@ -60,14 +60,14 @@ class BrokerInfo(SerializableObjectInfo):
 
     @overrides
     def __getstate__(self) -> dict:
-        d = super().__get_state__()
+        d = super().__getstate__()
         d["hostname"] = self._hostname
         d["network_addresses"] = self._network_addresses
         return d
 
     @overrides
     def __setstate__(self, state: dict):
-        super().__set_state__(state)
+        super().__setstate__(state)
         self._hostname = state["hostname"]
         self._network_addresses = state["network_addresses"]
 
@@ -78,3 +78,6 @@ class BrokerInfo(SerializableObjectInfo):
     @property
     def network_addresses(self):
         return self._network_addresses
+
+
+

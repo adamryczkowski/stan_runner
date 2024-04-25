@@ -53,11 +53,11 @@ class MessageBroker:
     _broker_id: BrokerInfo
 
     @staticmethod
-    async def Create(server_url: str, user: str, password: str = None):
+    async def Create(server_url: str, user: str, password: str = None) -> MessageBroker:
         nc = await connect_to_nats(nats_connection=server_url, user=user, password=password)
         js, stream = await create_stream(nc, permanent_storage=True, stream_name=STREAM_NAME)
         broker = MessageBroker(nc, js)
-
+        return broker
 
     async def check_for_network_duplicates(self):
         await self._keep_aliver.check_for_network_duplicates()
@@ -71,9 +71,9 @@ class MessageBroker:
         self._task_queue = deque()
         self._broker_id = BrokerInfo.CreateFromLocalHost()
         self._keep_aliver = KeepAliver(self._server_context, "stan.broker.alive", timeout=WORKER_TIMEOUT_SECONDS,
-                                       unique_id=self._broker_id.broker_id,
-                                       serialized_content=self._broker_id.serialize(),
-                                       serialized_format="json")
+                                       unique_id=self._broker_id.object_id,
+                                       serialized_content=self._broker_id.serialize(format="pickle"),
+                                       serialized_format="pickle")
         self._keep_aliver_task = None
 
         print(self._broker_id.pretty_print())

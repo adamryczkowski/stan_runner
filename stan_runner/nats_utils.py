@@ -176,7 +176,7 @@ async def clear_subject(js: JetStreamContext, stream_name: str, subject: str, ms
 
         if last_message is None:
             break
-        seq = last_message.seq + 1
         if msg_id is not None and last_message.headers["id"] != msg_id:
             continue
-        await js.delete_msg(stream_name, seq)
+        await js.delete_msg(stream_name, last_message.seq)
+        seq = last_message.seq + 1
