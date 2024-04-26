@@ -172,3 +172,7 @@ class MessageBroker:
         if bCloseNATS:
             print("Closing the NATS connection...")
             await self._server_raw.close()
+
+    @property
+    def workers(self) -> dict[str, WorkerInfo]:
+        return self._workers

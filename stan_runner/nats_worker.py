@@ -133,6 +133,12 @@ class NatsWorker:
         for s in self._subscriptions:
             await s.unsubscribe()
 
+    @property
+    def worker_id(self) -> str:
+        return self._uid
+
+
+
 
 
 async def get_model_code(model_hash: str, js: JetStreamContext) -> dict[str, str]:
