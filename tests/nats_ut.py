@@ -86,37 +86,77 @@ async def test_worker():
     broker = await MessageBroker.Create("localhost:4222", "szakal")
     broker_task = asyncio.create_task(broker.the_loop())
 
+    print("Starting worker...")
     worker = await NatsWorker.Create("localhost:4222", "szakal")
+    print("Worker created, entering the loop...")
     worker_task = asyncio.create_task(worker.the_loop())
 
+    print("Waiting for broker to notice the worker...")
     await asyncio.sleep(0.5)
+
+    print(" Check if worker produces advertisements (alive messages)...")
     last_message = await js.get_last_msg(STREAM_NAME, f"stan.worker_advert.{worker.worker_id}")
     assert last_message is not None
     assert last_message.headers["format"] in {"json", "pickle"}
     assert last_message.headers["id"] == worker.worker_id
     assert last_message.data is not None
+    print("...pass\n")
 
+    print("Check if the advertisement object is correct...")
     worker_info = WorkerInfo.CreateFromSerialized(last_message.data, WorkerInfo, last_message.headers["format"])
     assert isinstance(worker_info, WorkerInfo)
     assert worker_info.object_id == worker.worker_id
+    print("...pass\n")
 
+    print("Check if broker notices the worker, and if it is the correct one...")
     assert len(broker.workers) == 1
     broker_worker_id = next(iter(broker.workers.keys()))
     assert worker.worker_id == broker_worker_id
     worker_from_broker = broker.workers[broker_worker_id]
     assert worker_from_broker.object_id == worker.worker_id
     assert worker_from_broker.pretty_print() == worker_info.pretty_print()
+    print("...pass\n")
 
+    print("Another worker spawn.")
+    worker2 = await NatsWorker.Create("localhost:4222", "szakal")
+    worker2_task = asyncio.create_task(worker2.the_loop())
+    await asyncio.sleep(0.5) # Make sure broker has time to notice it
+
+    print("Check if broker notices the other worker, and if it is the correct one...")
+    assert len(broker.workers) == 2
+    assert worker2.worker_id in broker.workers
+    worker_from_broker = broker.workers[worker2.worker_id]
+    assert worker_from_broker.object_id == worker2.worker_id
+    assert worker_from_broker.pretty_print()
+    print("...pass\n")
+
+
+
+
+    print("Shutting down worker 1...")
     await worker.shutdown()
     await asyncio.wait_for(worker_task, 0.1)  # Will raise an exception if broker did not shut down in 0.1 second
+    await asyncio.sleep(0.5)
+
+    print("Check if broker notices the worker missing...")
+    assert len(broker.workers) == 1
+    assert worker2.worker_id in broker.workers
+    print("...pass\n")
+
+
+    print("Shutting down worker 2...")
+    await worker2.shutdown()
+    await asyncio.wait_for(worker2_task, 0.1)  # Will raise an exception if broker did not shut down in 0.1 second
 
     await asyncio.sleep(0.5)
     assert len(broker.workers) == 0
 
 
+    print("Shutting down the broker...")
     await broker.shutdown()
     await asyncio.wait_for(broker_task, 0.1)  # Will raise an exception if broker did not shut down in 0.1 second
 
+    print("Tearing down the server...")
     await teardown(server, nc)
 
 
@@ -165,6 +205,6 @@ async def teardown(proc: Process, nc: nats.NATS):
 
 
 if __name__ == '__main__':
-    asyncio.run(test_broker(), debug=True)
-    # asyncio.run(test_worker(), debug=True)
+    # asyncio.run(test_broker(), debug=True)
+    asyncio.run(test_worker(), debug=True)
     # asyncio.get_event_loop().close()

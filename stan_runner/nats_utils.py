@@ -90,6 +90,7 @@ class AliveListener:
         self._listen_task = None
         self._time_to_next_prune = -1
         self._prune_event = asyncio.Event()
+        self._prune_event.clear()
         self._queue = deque()
         self._prune_task = None
 
@@ -101,7 +102,7 @@ class AliveListener:
                 del self._alive_entities[object_id]
 
             # Remove the message
-            await self._js.delete_msg(STREAM_NAME, message.seq)
+            await self._js.delete_msg(STREAM_NAME, message.metadata.sequence.stream)
             return
 
         try:
@@ -150,14 +151,21 @@ class AliveListener:
             self._time_to_next_prune = first_item.timestamp + WORKER_TIMEOUT_SECONDS - time.time()
 
     async def prune_loop(self):
-        while True:
-            # Wait for asyncio.sleep(self._time_to_next_prune) and for the self._event whatever comes first.
-            if self._time_to_next_prune < 0:
-                await self._prune_event.wait()
-            else:
-                await asyncio.wait([asyncio.sleep(self._time_to_next_prune), self._prune_event.wait()],
-                                   return_when=asyncio.FIRST_COMPLETED)
-            self.prune_queue()
+        try:
+            while True:
+                # Wait for asyncio.sleep(self._time_to_next_prune) and for the self._event whatever comes first.
+                if self._time_to_next_prune < 0:
+                    await self._prune_event.wait()
+                    self._prune_event.clear()
+                else:
+                    await asyncio.wait_for(self._prune_event.wait(), timeout=self._time_to_next_prune)
+                    self._prune_event.clear()
+
+                self.prune_queue()
+        except asyncio.CancelledError:
+            self._prune_task = None
+            print("Canceling prune_loop...")
+            await self.shutdown()
 
     async def shutdown(self):
         if self._listen_task is not None:
@@ -166,7 +174,8 @@ class AliveListener:
         self._prune_event.set()
         self._queue.clear()
         self._alive_entities.clear()
-        self._prune_task.cancel()
+        if self._prune_task is not None and not self._prune_task.cancelled():
+            self._prune_task.cancel()
 
 
     def __len__(self):
@@ -177,6 +186,9 @@ class AliveListener:
 
     def values(self):
         return self._alive_entities.values()
+
+    def keys(self):
+        return self._alive_entities.keys()
 
     def __getitem__(self, key):
         return self._alive_entities[key]

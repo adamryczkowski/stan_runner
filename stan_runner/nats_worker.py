@@ -121,6 +121,7 @@ class NatsWorker:
 
         self._keep_aliver_task = asyncio.create_task(self._keep_aliver.keep_alive())
 
+
     async def shutdown(self):
         print("Received exit signal, shutting down...")
 
