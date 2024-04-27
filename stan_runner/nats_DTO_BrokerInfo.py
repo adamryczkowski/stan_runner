@@ -44,13 +44,18 @@ class BrokerInfo(SerializableObjectInfo):
 
     def __init__(self, hostname: str, network_addresses: dict[str, list[str]], object_id: str = None,
                  timestamp: float = None):
-        super().__init__(object_id, timestamp, object_id_prefix="broker_")
+        super().__init__(object_id)
         self._hostname = hostname
         self._network_addresses = network_addresses
 
     @overrides
     def pretty_print(self)->str:
-        ans = f"""Broker {self.object_id} \"{self._hostname}\", last seen {humanize.naturaltime(datetime.datetime.fromtimestamp(time.time()) - datetime.datetime.fromtimestamp(self.timestamp))}, with network addresses:\n\n"""
+        if self.timestamp is None:
+            ans = f"Broker {self.object_id} \"{self._hostname}\", never seen"
+        else:
+            ans = f"Broker {self.object_id} \"{self._hostname}\", last seen {humanize.naturaltime(datetime.datetime.fromtimestamp(time.time()) - datetime.datetime.fromtimestamp(self.timestamp))}"
+
+        ans += f""", with network addresses:\n\n"""
 
         ifaces = []
         for iface, addresses in self._network_addresses.items():

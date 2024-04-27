@@ -44,7 +44,7 @@ async def test_broker():
 
     broker_task = asyncio.create_task(broker.the_loop())
 
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(2)
 
     # Test for the keep-alive message
     last_message = await js.get_last_msg(STREAM_NAME, "stan.broker.alive")
@@ -65,14 +65,17 @@ async def test_broker():
         assert e.other_object_id == broker._broker_id.object_id
 
     await broker.shutdown()
-    await asyncio.wait_for(broker_task, 0.1)  # Will raise an exception if broker did not shut down in 0.1 second
+    await asyncio.wait_for(broker_task, 1)  # Will raise an exception if broker did not shut down in 0.1 second
 
     try:
         last_message = await js.get_last_msg(STREAM_NAME, "stan.broker.alive")
     except nats.js.errors.NotFoundError:
         last_message = None
 
-    assert last_message is None
+    assert last_message is not None
+    assert last_message.headers["format"] in {"json", "pickle"}
+    assert last_message.headers["state"] == "shutdown"
+
 
     await teardown(server, nc)
 
@@ -94,6 +97,7 @@ async def test_worker():
     assert last_message.data is not None
 
     worker_info = WorkerInfo.CreateFromSerialized(last_message.data, WorkerInfo, last_message.headers["format"])
+    assert isinstance(worker_info, WorkerInfo)
     assert worker_info.object_id == worker.worker_id
 
     assert len(broker.workers) == 1
@@ -116,6 +120,28 @@ async def test_worker():
     await teardown(server, nc)
 
 
+async def kill_nets_server(proc: Process):
+    try:
+        # proc.terminate()
+        print("Trying to terminate the NATS server process...")
+        try:
+            parent = psutil.Process(proc.pid)
+        except psutil.NoSuchProcess:
+            print("No NATS servers managed by us. Exiting.")
+            return
+
+        for child in parent.children(recursive=True):
+            print("Sending sigint to child process")
+            child.send_signal(2)  # sigint
+            child.wait(1)
+        if parent.is_running():
+            await proc.wait()
+            if parent.is_running():
+                print("Stubborn process. Killing it.")
+                parent.terminate()
+        await proc.wait()
+    except ProcessLookupError:
+        pass
 
 
 async def teardown(proc: Process, nc: nats.NATS):
@@ -128,29 +154,17 @@ async def teardown(proc: Process, nc: nats.NATS):
         except asyncio.CancelledError:
             pass
 
-    try:
-        # proc.terminate()
-        parent = psutil.Process(proc.pid)
-        for child in parent.children(recursive=True):
-            child.send_signal(2)  # sigint
-            child.wait(1)
-        if parent.is_running():
-            await proc.wait()
-            if parent.is_running():
-                parent.terminate()
-
-        proc.kill()
-    except ProcessLookupError:
-        pass
-
 
     await nc.close()
-
     await asyncio.sleep(0)
+
+    await kill_nets_server(proc)
+
+
 
 
 
 if __name__ == '__main__':
-    # asyncio.run(test_broker(), debug=True)
-    asyncio.run(test_worker(), debug=True)
+    asyncio.run(test_broker(), debug=True)
+    # asyncio.run(test_worker(), debug=True)
     # asyncio.get_event_loop().close()

@@ -14,7 +14,7 @@ from nats.js import JetStreamContext
 from .nats_DTO_BrokerInfo import BrokerInfo
 from .nats_TaskInfo import TaskInfo
 from .nats_DTO_WorkerInfo import WorkerInfo
-from .nats_utils import STREAM_NAME, create_stream, connect_to_nats, WORKER_TIMEOUT_SECONDS, KeepAliver
+from .nats_utils import STREAM_NAME, create_stream, connect_to_nats, WORKER_TIMEOUT_SECONDS, KeepAliver, AliveListener
 
 
 # This is a message broker.
@@ -42,11 +42,13 @@ class MessageBroker:
     _server_context: JetStreamContext
     _server_raw: nats.NATS
 
-    _workers: dict[str, WorkerInfo]
+    _workers: AliveListener
+
     _tasks: dict[str, TaskInfo]
     _task_queue: deque[str]
     _keep_aliver: KeepAliver
     _keep_aliver_task: asyncio.Task | None
+    _workers_alive_task: asyncio.Task | None
 
     _subscriptions: list | None
 
@@ -66,7 +68,8 @@ class MessageBroker:
         self._server_raw = nc
         self._server_context = js
 
-        self._workers = {}
+        self._workers = AliveListener(self._server_context, "stan.worker_advert.>", WorkerInfo)
+        self._workers_alive_task = None
         self._tasks = {}
         self._task_queue = deque()
         self._broker_id = BrokerInfo.CreateFromLocalHost()
@@ -78,30 +81,31 @@ class MessageBroker:
 
         print(self._broker_id.pretty_print())
 
-    def prune_workers(self):
-        """Removes workers, that have not advertised themselves in the last WORKER_TIMEOUT_SECONDS seconds"""
-        to_delete = []
-        for worker_id, worker in self._workers.items():
-            if time.time() - worker.last_seen > WORKER_TIMEOUT_SECONDS:
-                to_delete.append(worker_id)
+    # def prune_workers(self):
+    #     """Removes workers, that have not advertised themselves in the last WORKER_TIMEOUT_SECONDS seconds"""
+    #     to_delete = []
+    #     for worker_id, worker in self._workers.items():
+    #         if time.time() - worker.timestamp > WORKER_TIMEOUT_SECONDS:
+    #             to_delete.append(worker_id)
+    #
+    #     for worker_id in to_delete:
+    #         del self._workers[worker_id]
 
-        for worker_id in to_delete:
-            del self._workers[worker_id]
-
-    async def handle_worker_adv(self, message: Msg):
-        """Called when a worker advertises itself"""
-        worker_id = message.subject.split(".")[-1]
-        worker_props = json.loads(message.data)
-        worker = WorkerInfo(**worker_props)
-        assert worker_id == worker.worker_hash
-
-        if worker.worker_hash not in self._workers:
-            print(f"New worker: {worker}")
-            self._workers[worker.worker_hash] = worker
-        else:
-            self._workers[worker.worker_hash].update_last_seen()
-
-        await self.try_sending_tasks_to_workers()
+    # async def handle_worker_adv(self, message: Msg):
+    #     """Called when a worker advertises itself"""
+    #     worker_id = message.subject.split(".")[-1]
+    #     # noinspection PyTypeChecker
+    #     worker:WorkerInfo = WorkerInfo.CreateFromSerialized(message.data, WorkerInfo, message.headers["format"])
+    #     assert worker_id == worker.object_id
+    #     worker.update_last_seen(float(message.headers["timestamp"]))
+    #
+    #     if worker.object_id not in self._workers:
+    #         print(f"New worker: {worker}")
+    #         self._workers[worker.object_id] = worker
+    #     else:
+    #         self._workers[worker.object_id].update_last_seen()
+    #
+    #     await self.try_sending_tasks_to_workers()
 
     async def handle_task(self, message: Msg):
         """Called when a new task arrives"""
@@ -118,9 +122,6 @@ class MessageBroker:
     async def try_sending_tasks_to_workers(self):
         """Checks if there is an opportunity to send tasks to workers"""
 
-        # Remove workers that have not advertised themselves in a while
-        self.prune_workers()
-
         # Check if there are any workers
         if len(self._workers) == 0:
             return
@@ -133,7 +134,17 @@ class MessageBroker:
         task_hash = self._task_queue.popleft()
         task = self._tasks[task_hash]
 
-        for worker_id, worker in self._workers.items():
+        # Get the first worker that has the model precompiled
+        for worker_id, worker in self._workers.values():
+            assert isinstance(worker, WorkerInfo)
+            if worker.does_have_model_precompiled(task.model) and worker.can_handle_task(task):
+                print(f"Sending task {task_hash} to worker {worker_id}")
+                await self._server_context.publish(f"stan.work_order.{worker_id}", task_hash.encode())
+                return
+
+        # Then get the first worker that can handle the task at all
+        for worker_id, worker in self._workers.values():
+            assert isinstance(worker, WorkerInfo)
             if worker.can_handle_task(task):
                 print(f"Sending task {task_hash} to worker {worker_id}")
                 await self._server_context.publish(f"stan.work_order.{worker_id}", task_hash.encode())
@@ -145,23 +156,32 @@ class MessageBroker:
     async def the_loop(self):
         # Attach the shutdown coroutine to SIGINT and SIGTERM
         loop = asyncio.get_running_loop()
-        loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(self.shutdown(loop)))
-        loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(self.shutdown(loop)))
+        loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(self.shutdown()))
+        loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(self.shutdown()))
 
-        sub1 = await self._server_raw.subscribe("stan.worker_adv.>", cb=self.handle_worker_adv)
         sub2 = await self._server_raw.subscribe("stan.taskdef.>", cb=self.handle_task)
 
-        self._subscriptions = [sub1, sub2]
+        self._subscriptions = [sub2]
 
-        self._keep_aliver_task = asyncio.create_task(self._keep_aliver.keep_alive())
+        self._keep_aliver_task = asyncio.create_task(self._keep_aliver.the_loop())
+        self._workers_alive_task = asyncio.create_task(self._workers.the_loop())
 
     async def shutdown(self, bCloseNATS: bool = False):
         print("Received exit signal, shutting down...")
 
         print("Canceling the keep-aliver task...")
+        await self._keep_aliver.shutdown()
         self._keep_aliver_task.cancel()
         try:
             await self._keep_aliver_task
+        except asyncio.CancelledError:
+            pass
+
+        print("Canceling listening to the workers task...")
+        await self._workers.shutdown()
+        self._workers_alive_task.cancel()
+        try:
+            await self._workers_alive_task
         except asyncio.CancelledError:
             pass
 

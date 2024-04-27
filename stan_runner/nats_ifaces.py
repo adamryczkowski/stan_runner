@@ -6,7 +6,7 @@ from typing import Type
 class NetworkDuplicateError(Exception):
     _other_object_id: str
 
-    def __init__(self, other_object_id: str, message:str = None):
+    def __init__(self, other_object_id: str, message: str = None):
         if message is not None:
             super().__init__(message)
         else:
@@ -18,14 +18,11 @@ class NetworkDuplicateError(Exception):
         return self._other_object_id
 
 
-
-class ISerializableObjectInfo(ABC):
-    """Base class for every object that is trasfered by wire"""
-
+class ISerializableObject(ABC):
     @staticmethod
     @abstractmethod
-    def CreateFromSerialized(serialized: bytes, object_type: Type[ISerializableObjectInfo],
-                             format: str = "pickle") -> ISerializableObjectInfo:
+    def CreateFromSerialized(serialized: bytes, object_type: Type[ISerializableObject],
+                             format: str = "pickle") -> ISerializableObject:
         ...
 
     def __init__(self):
@@ -34,6 +31,21 @@ class ISerializableObjectInfo(ABC):
     @abstractmethod
     def serialize(self, format: str = "pickle") -> bytes:
         ...
+
+    @abstractmethod
+    def __getstate__(self) -> dict:
+        ...
+
+    @abstractmethod
+    def __setstate__(self, state: dict):
+        ...
+
+
+class ISerializableObjectInfo(ISerializableObject):
+    """Base class for every object that is transferred by wire"""
+
+    def __init__(self):
+        super().__init__()
 
     @property
     @abstractmethod
@@ -46,21 +58,12 @@ class ISerializableObjectInfo(ABC):
 
     @property
     @abstractmethod
-    def timestamp(self) -> float:
-        ...
-
-    @abstractmethod
-    def __getstate__(self) -> dict:
-        ...
-
-    @abstractmethod
-    def __setstate__(self, state: dict):
+    def timestamp(self) -> float|None:
         ...
 
     def __repr__(self):
         return self.pretty_print()
 
-
     @abstractmethod
-    def update_last_seen(self):
+    def update_last_seen(self, timestamp: float=None):
         ...

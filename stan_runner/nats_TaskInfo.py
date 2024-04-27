@@ -17,3 +17,11 @@ class TaskInfo:
         self._data = DataInfo(data_hash)
         self._scope = scope
         self._engine = engine
+
+    @property
+    def task_hash(self) -> str:
+        return self._task_hash
+
+    @property
+    def model(self) -> ModelInfo:
+        return self._model

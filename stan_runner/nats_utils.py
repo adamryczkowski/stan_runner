@@ -10,7 +10,10 @@ from nats.js import JetStreamContext
 from nats.js.api import RawStreamMsg
 from nats.js.api import StorageType, DiscardPolicy, StreamInfo
 from nats.js.errors import NotFoundError
-from .nats_ifaces import NetworkDuplicateError
+from nats.aio.msg import Msg
+from nats.aio.subscription import Subscription
+from .nats_ifaces import NetworkDuplicateError, ISerializableObjectInfo, ISerializableObject
+from collections import deque
 
 STREAM_NAME = "stan_runner"
 WORKER_TIMEOUT_SECONDS = 60
@@ -65,10 +68,125 @@ def name_topic_run(run_hash: bytes | str, topic: str) -> tuple[str, str]:
     return f"stan.{topic}.{run_hash}", run_hash
 
 
-class SerializableObject(ABC):
-    @abstractmethod
-    def serialize(self) -> bytes:
-        pass
+class AliveListener:
+    """Class that listens to keep-alive messages"""
+
+    _subject: str  # The subject to listen to
+    _alive_entities: dict[str, ISerializableObjectInfo]
+    _js: JetStreamContext
+    _expected_type: type[ISerializableObjectInfo]
+    _queue: deque[ISerializableObjectInfo]
+
+    _listen_task: Subscription | None
+    _time_to_next_prune: float  # -1 means that the queue is empty and there is no need to wait.
+    _prune_event: asyncio.Event
+    _prune_task: asyncio.Task | None
+
+    def __init__(self, js: JetStreamContext, subject: str, expected_type: type[ISerializableObjectInfo]):
+        self._subject = subject
+        self._alive_entities = {}
+        self._js = js
+        self._expected_type = expected_type
+        self._listen_task = None
+        self._time_to_next_prune = -1
+        self._prune_event = asyncio.Event()
+        self._queue = deque()
+        self._prune_task = None
+
+    async def handle_keep_alive(self, message: Msg):
+        """Handle a keep-alive message."""
+        if message.headers["state"] == "shutdown":
+            object_id = message.headers["id"]
+            if object_id in self._alive_entities:
+                del self._alive_entities[object_id]
+
+            # Remove the message
+            await self._js.delete_msg(STREAM_NAME, message.seq)
+            return
+
+        try:
+            entity: ISerializableObject = self._expected_type.CreateFromSerialized(message.data, self._expected_type,
+                                                                                   message.headers["format"])
+            assert isinstance(entity, ISerializableObjectInfo)
+        except Exception as e:
+            print(f"Error: {e}")
+            return
+
+        entity.update_last_seen(float(message.headers["timestamp"]))  # An important line.
+        # The entity has a slot for its timestamp, which is updated here.
+        self._alive_entities[entity.object_id] = entity
+        self._queue.append(entity)
+        if self._time_to_next_prune < 0:
+            self._prune_event.set()
+
+    async def the_loop(self):
+        assert self._listen_task is None
+        self._listen_task = await self._js.subscribe(self._subject, cb=self.handle_keep_alive)
+
+        self._prune_task = asyncio.create_task(self.prune_loop())
+        await self._prune_task
+
+    def prune_queue(self):
+        """Remove entities from queue that have not advertised themselves in the last WORKER_TIMEOUT_SECONDS seconds.
+        Sets the time needed to wait for the next pruning."""
+        to_delete = []
+        for i, entity in enumerate(self._queue):
+            if time.time() - entity.timestamp > WORKER_TIMEOUT_SECONDS:
+                to_delete.append((i, entity.object_id, entity.timestamp))
+            else:
+                break  # We can break here, because the queue is sorted by timestamp
+
+        for i, entity_id, timestamp in reversed(to_delete):
+            del self._queue[i]
+            if entity_id not in self._alive_entities:
+                continue
+            if self._alive_entities[entity_id].timestamp == timestamp:
+                del self._alive_entities[entity_id]
+
+        if len(self._queue) == 0:
+            self._time_to_next_prune = -1
+        else:
+            first_item = self._queue[0]
+            self._time_to_next_prune = first_item.timestamp + WORKER_TIMEOUT_SECONDS - time.time()
+
+    async def prune_loop(self):
+        while True:
+            # Wait for asyncio.sleep(self._time_to_next_prune) and for the self._event whatever comes first.
+            if self._time_to_next_prune < 0:
+                await self._prune_event.wait()
+            else:
+                await asyncio.wait([asyncio.sleep(self._time_to_next_prune), self._prune_event.wait()],
+                                   return_when=asyncio.FIRST_COMPLETED)
+            self.prune_queue()
+
+    async def shutdown(self):
+        if self._listen_task is not None:
+            await self._listen_task.unsubscribe()
+            self._listen_task = None
+        self._prune_event.set()
+        self._queue.clear()
+        self._alive_entities.clear()
+        self._prune_task.cancel()
+
+
+    def __len__(self):
+        return len(self._alive_entities)
+
+    def __iter__(self):
+        return iter(self._alive_entities.values())
+
+    def values(self):
+        return self._alive_entities.values()
+
+    def __getitem__(self, key):
+        return self._alive_entities[key]
+
+    def __contains__(self, key):
+        return key in self._alive_entities
+
+    def __delitem__(self, key):
+        del self._alive_entities[
+            key]  # We simply abandon the object in the queue. In time it will get pruned very efficiently.
 
 
 class KeepAliver:
@@ -80,12 +198,15 @@ class KeepAliver:
     _content_object: bytes | None
     _serialized_format: str
     _last_msg_seq: int | None
+    _is_busy: bool
+    _keep_alive_task: asyncio.Task | None
 
     @staticmethod
     async def Create(js: JetStreamContext, subject: str, timeout: float = 60., unique_id: str = None,
                      serialized_content: bytes = None, serialized_format: str = "json") -> KeepAliver:
         obj = KeepAliver(js, subject, timeout, unique_id, serialized_content, serialized_format)
         await obj.remove_all_past_messages()
+        return obj
 
     def __init__(self, js: JetStreamContext, subject: str, timeout: float = 60., unique_id: str = None,
                  serialized_content: bytes = None, serialized_format: str = "json"):
@@ -98,66 +219,101 @@ class KeepAliver:
         self._content_object = serialized_content
         self._serialized_format = serialized_format
         self._last_msg_seq = None
+        self._is_busy = False
+        self._keep_alive_task = None
 
     async def remove_all_past_messages(self):
         await clear_subject(self._js, STREAM_NAME, self._subject)
 
-    async def shutdown(self):
+    async def set_as_busy(self):
+        if self._is_busy:
+            return
+        self._is_busy = False
+        await self.resend_message()
+
+    async def set_as_ready(self):
+        if not self._is_busy:
+            return
+        self._is_busy = False
+        await self.resend_message()
+
+    async def resend_message(self):
+        headers = {
+            "state": "busy" if self._is_busy else "ready",
+            "format": self._serialized_format,
+            "timestamp": str(float(time.time()))}
+
+        if self._my_id is not None:
+            headers["id"] = self._my_id
+
+        ack = await self._js.publish(self._subject, payload=self._content_object, stream=STREAM_NAME,
+                                     headers=headers)
         if self._last_msg_seq is not None:
             await self._js.delete_msg(STREAM_NAME, self._last_msg_seq)
+            self._last_msg_seq = ack.seq
 
-    async def check_for_network_duplicates(self):
-        """Check if there are any other workers on the network with the same ID"""
+
+    async def shutdown(self):
+        if self._last_msg_seq is not None:
+            print("Sending shutdown message...")
+            await self._js.publish(self._subject, payload=b"shutdown", stream=STREAM_NAME, headers={
+                "state": "shutdown",
+                "format": self._serialized_format,
+                "id": self._my_id,
+                "timestamp": str(float(time.time()))
+            })
+
+            try:
+               await self._js.delete_msg(STREAM_NAME, self._last_msg_seq)
+               self._last_msg_seq = None
+
+            except nats.js.errors.NotFoundError:
+                print("Cannot delete the last keep-alive message!")
+                pass
+
+        if self._keep_alive_task is not None and not self._keep_alive_task.cancelled():
+            self._keep_alive_task.cancel()
+
+    async def check_for_network_duplicates(self)->float:
+        """Check if there are any other workers on the network with the same ID. Sets last message sequence nr.
+        Returns time to time to last message
+        """
         try:
             last_message: RawStreamMsg | None = await self._js.get_last_msg(stream_name=STREAM_NAME,
                                                                             subject=self._subject)
         except nats.js.errors.NotFoundError:
-            return
+            return float("inf")
 
-        if last_message is not None:
-            time_to_last_message = time.time() - float(last_message.headers["timestamp"])
-            if self._my_id is not None and last_message.headers["id"] != self._my_id:
-                if time_to_last_message < self._timeout:
-                    raise NetworkDuplicateError(last_message.headers["id"],
-                                                f"Id mismatch: {last_message.headers['id']} != {self._my_id}")
+        assert last_message is not None
+        time_to_last_message = time.time() - float(last_message.headers["timestamp"])
+        if self._my_id is not None and last_message.headers["id"] != self._my_id and last_message.headers[
+            "state"] != "shutdown":
+            if time_to_last_message < self._timeout:
+                raise NetworkDuplicateError(last_message.headers["id"],
+                                            f"Id mismatch: {last_message.headers['id']} != {self._my_id}")
+        self._last_msg_seq = last_message.seq
+        return time_to_last_message
 
     async def keep_alive(self):
-        """Send a keep-alive message to the NATS server."""
+        """Keep sending keep-alive messages to the NATS server."""
+
         try:
             while True:
-                try:
-                    last_message: RawStreamMsg | None = await self._js.get_last_msg(stream_name=STREAM_NAME,
-                                                                                    subject=self._subject)
-                except nats.js.errors.NotFoundError:
-                    last_message = None
-
-                if last_message is not None:
-                    time_to_last_message = time.time() - float(last_message.headers["timestamp"])
-                    if self._my_id is not None and last_message.headers["id"] != self._my_id:
-                        if time_to_last_message < self._timeout:
-                            raise Exception(f"Id mismatch: {last_message.headers['id']} != {self._my_id}")
-                    self._last_msg_seq = last_message.seq
-                else:
-                    time_to_last_message = float("inf")
+                time_to_last_message = await self.check_for_network_duplicates()
 
                 if (time_to_wait := max(0., self._timeout - time_to_last_message)) > 0:
                     await asyncio.sleep(time_to_wait)
 
-                headers = {
-                    "format": self._serialized_format,
-                    "timestamp": str(float(time.time()))}
+                await self.resend_message()
 
-                if self._my_id is not None:
-                    headers["id"] = self._my_id
-
-                ack = await self._js.publish(self._subject, payload=self._content_object, stream=STREAM_NAME,
-                                             headers=headers)
-                if self._last_msg_seq is not None:
-                    await self._js.delete_msg(STREAM_NAME, self._last_msg_seq)
-                    self._last_msg_seq = ack.seq
         except asyncio.CancelledError:
+            self._keep_alive_task = None
             print("Canceling keep-alive message...")
             await self.shutdown()
+
+    async def the_loop(self):
+        self._keep_alive_task = asyncio.create_task(self.keep_alive())
+        await self._keep_alive_task
 
 
 async def clear_subject(js: JetStreamContext, stream_name: str, subject: str, msg_id: str = None):

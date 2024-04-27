@@ -6,6 +6,8 @@ import concurrent.futures
 import math
 import json
 from adams_text_utils import human_readable_size
+from .nats_ifaces import ISerializableObject
+from typing import Type
 import datetime
 import socket
 import time
@@ -19,7 +21,7 @@ from .nats_DTO import SerializableObjectInfo
 
 
 
-class WorkerCapacityInfo:
+class WorkerCapacityInfo(ISerializableObject):
     _total_mem: int
     _free_mem: int
     _total_cores: int
@@ -28,9 +30,10 @@ class WorkerCapacityInfo:
     _cpu_benchmark_at: float  # All threads
 
     @staticmethod
-    def CreateFromSerialized(data: bytes, format:str) -> WorkerCapacityInfo:
+    def CreateFromSerialized(serialized: bytes, object_type: Type[ISerializableObject],
+                             format: str = "pickle") -> ISerializableObject:
         assert format == "json"
-        d = json.loads(data)
+        d = json.loads(serialized)
         return WorkerCapacityInfo(**d)
 
     @staticmethod
@@ -80,12 +83,13 @@ class WorkerCapacityInfo:
         return self._cpu_benchmark_at
 
     def pretty_print(self):
-        print(f"Total memory: {human_readable_size(self.total_mem)}")
-        print(f"Free memory: {human_readable_size(self.free_mem)}")
-        print(f"Total cores: {self.total_cores}")
-        print(f"Free disk space: {human_readable_size(self.disk_free)}")
-        print(f"CPU benchmark (single-threaded): {self.cpu_benchmark_st:.2f} iterations/s")
-        print(f"CPU benchmark (all threads): {self.cpu_benchmark_at:.2f} iterations/s")
+        ans = f"""Total memory: {human_readable_size(self.total_mem)}
+Free memory: {human_readable_size(self.free_mem)}
+Total cores: {self.total_cores}
+Free disk space: {human_readable_size(self.disk_free)}
+CPU benchmark (single-threaded): {self.cpu_benchmark_st:.2f} iterations/s
+CPU benchmark (all threads): {self.cpu_benchmark_at:.2f} iterations/s"""
+        return ans
 
 
     def __getstate__(self) -> dict:

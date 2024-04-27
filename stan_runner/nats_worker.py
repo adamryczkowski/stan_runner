@@ -19,6 +19,7 @@ from .ifaces import StanOutputScope, StanResultEngine
 from .nats_utils import name_topic_datadef, name_topic_modeldef, name_topic_run, STREAM_NAME, connect_to_nats, \
     WORKER_TIMEOUT_SECONDS, KeepAliver
 from .worker_capacity_info import WorkerCapacityInfo
+from .nats_DTO_WorkerInfo import WorkerInfo
 
 
 class NatsWorker:
@@ -41,7 +42,7 @@ class NatsWorker:
 
     def __init__(self, js: JetStreamContext, model_cache_dir: Path = None, output_dir: Path = None):
         if model_cache_dir is None:
-            model_cache_dir = Path("model_cache")
+            model_cache_dir = Path("stan_runner/model_cache")
         if output_dir is None:
             output_dir = Path("outputs")
             output_dir.mkdir(exist_ok=True, parents=True)
@@ -51,9 +52,11 @@ class NatsWorker:
         self._uid = "worker_" + str(uuid.uuid4())[0:8]
         self._self_capacity = WorkerCapacityInfo.BenchmarkSelf(output_dir)
         self._subscriptions = []
+        obj = WorkerInfo(self._self_capacity.__getstate__(), object_id=self._uid, birth=time.time(),
+                         models_compiled=self._runner.models_compiled, name="Stan Worker")
         self._keep_aliver = KeepAliver(self._js, subject=f"stan.worker_advert.{self._uid}",
                                        timeout=WORKER_TIMEOUT_SECONDS, unique_id=self._uid,
-                                       serialized_content=self._self_capacity.serialize(), serialized_format="json")
+                                       serialized_content=obj.serialize("pickle"), serialized_format="pickle")
         self._keep_aliver_task = None
 
     async def handle_task(self, msg: Msg):
@@ -106,7 +109,6 @@ class NatsWorker:
                                headers={"format": "pickle", "output_scope": output_scope.txt_value(),
                                         "status": "success"})  # Three statuses: success, failure, exception. Exceptions will be retried.
 
-
     async def the_loop(self):
         # Attach the shutdown coroutine to SIGINT and SIGTERM
         loop = asyncio.get_running_loop()
@@ -136,9 +138,6 @@ class NatsWorker:
     @property
     def worker_id(self) -> str:
         return self._uid
-
-
-
 
 
 async def get_model_code(model_hash: str, js: JetStreamContext) -> dict[str, str]:

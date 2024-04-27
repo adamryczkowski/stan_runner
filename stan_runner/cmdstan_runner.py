@@ -17,7 +17,7 @@ from overrides import overrides
 
 from .ifaces import StanErrorType, IStanRunner, ILocalInferenceResult
 from .result_adapter import InferenceResult
-from .utils import find_model_in_cache, normalize_stan_model_by_file
+from .utils import find_model_in_cache, normalize_stan_model_by_file, get_compiled_model_hashes
 
 _fallback = json._default_encoder.default
 json._default_encoder.default = lambda obj: getattr(obj.__class__, "to_json", _fallback)(obj)
@@ -208,6 +208,10 @@ class CmdStanRunner(IStanRunner):
 
         self._model_filename = model_filename
         self._last_model_hash = model_hash
+
+    @property
+    def models_compiled(self)->set[str]:
+        return set(get_compiled_model_hashes(self._model_cache).keys())
 
     @overrides
     def load_model_by_str(self, model_code: str | list[str], model_name: str, pars_list: list[str] = None):

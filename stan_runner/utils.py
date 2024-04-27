@@ -40,6 +40,14 @@ def find_model_in_cache(model_cache: Path, model_name: str, model_hash: str) -> 
     assert best_model_filename is not None
     return best_model_filename
 
+def get_compiled_model_hashes(model_cache:Path) -> dict[str, Path]:
+    ans = {}
+    for model_file in model_cache.glob("*.stan"):
+        with model_file.open("r") as f:
+            model_code = f.read()
+        model_hash = sha256(model_code.encode()).hexdigest()
+        ans[model_file.stem] = model_hash
+    return ans
 
 def infer_param_shapes(one_dim_names: list[str]) -> tuple[dict[str, tuple[int, ...]], dict[str, list[str]]]:
     ans_dims: dict[str, tuple[int, ...]] = {}

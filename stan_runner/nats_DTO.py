@@ -5,26 +5,19 @@ import uuid
 
 from overrides import overrides
 from typing import Type
-from .nats_ifaces import ISerializableObjectInfo
+from .nats_ifaces import ISerializableObjectInfo, ISerializableObject
 from .utils import make_dict_serializable
 
 
-class SerializableObjectInfo(ISerializableObjectInfo):
-    _object_id: str
-    _timestamp: float
 
-    def __init__(self, object_id: str = None, timestamp: float = None, object_id_prefix: str = ""):
-        if object_id is None:
-            object_id = object_id_prefix + str(uuid.uuid4())[0:8]
-        if timestamp is None:
-            timestamp = time.time()
-        self._object_id = object_id
-        self._timestamp = timestamp
+class SerializableObject(ISerializableObject):
+    def __init__(self):
+        super().__init__()
 
     @staticmethod
     @overrides
-    def CreateFromSerialized(serialized: bytes, object_type: Type[ISerializableObjectInfo],
-                             format: str = "pickle") -> ISerializableObjectInfo:
+    def CreateFromSerialized(serialized: bytes, object_type: Type[ISerializableObject],
+                             format: str = "pickle") -> ISerializableObject:
         if format == "json":
             d = json.loads(serialized)
         elif format == "pickle":
@@ -47,6 +40,27 @@ class SerializableObjectInfo(ISerializableObjectInfo):
         elif format == "pickle":
             return pickle.dumps(d)
 
+    @overrides
+    def __getstate__(self) -> dict:
+        return {}
+
+    @overrides
+    def __setstate__(self, state: dict):
+        pass
+
+
+class SerializableObjectInfo(SerializableObject, ISerializableObjectInfo):
+    _object_id: str
+    _timestamp: float | None
+
+    def __init__(self, object_id: str = None):
+        super().__init__()
+        if object_id is None:
+            object_id = str(uuid.uuid4())[0:8]
+        self._object_id = object_id
+        self._timestamp = None
+
+
     @property
     @overrides
     def object_id(self) -> str:
@@ -54,21 +68,24 @@ class SerializableObjectInfo(ISerializableObjectInfo):
 
     @property
     @overrides
-    def timestamp(self) -> float:
+    def timestamp(self) -> float|None:
         return self._timestamp
 
     @overrides
     def __getstate__(self) -> dict:
-        return {
-            "object_id": self._object_id,
-            "timestamp": self._timestamp
-        }
+        super_state = super().__getstate__()
+        super_state["object_id"] = self._object_id
+        return super_state
 
     @overrides
     def __setstate__(self, state: dict):
+        super().__setstate__(state)
         self._object_id = state["object_id"]
-        self._timestamp = state["timestamp"]
 
     @overrides
-    def update_last_seen(self):
-        self._timestamp = time.time()
+    def update_last_seen(self, timestamp: float=None):
+        if timestamp is not None:
+            self._timestamp = timestamp
+        else:
+            self._timestamp = time.time()
+
