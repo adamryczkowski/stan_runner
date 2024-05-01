@@ -118,8 +118,8 @@ class StanData(IStanData, IMetaObjectBase):
     def get_object(self) -> ISerializableObject:
         return self
 
-    @overrides
-    def get_metaobject(self) -> IMetaObject:
+    @overrides(check_signature=False)
+    def get_metaobject(self) -> IStanDataMeta:
         return StanDataMeta(self.object_hash, {k: self.get_variable_meta(k) for k in self.variable_names})
 
     @property
@@ -131,3 +131,15 @@ class StanData(IStanData, IMetaObjectBase):
     @overrides
     def object_hash(self) -> int:
         return calc_hash(self.__getstate__())
+
+    @property
+    def data_json_file(self) -> Path:
+        return self._data_file
+
+    @property
+    def data_dict(self) -> dict[str, np.ndarray | int | float]:
+        return self._data
+
+
+
+

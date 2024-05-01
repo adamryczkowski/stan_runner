@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Type, Any
 
 import numpy as np
@@ -10,6 +11,11 @@ import prettytable
 from nats_foundation import ISerializableObject, IObjectWithMeta, IPrettyPrintable, IMetaObject, ObjectWithID
 from nats_foundation import SerializableObject, HashContainingObject, IObjectWithID
 from overrides import overrides
+from prettytable import PrettyTable
+import humanize
+import cmdstanpy
+
+from .ifaces import StanResultEngine, StanOutputScope
 
 
 class IMetaObjectBase(SerializableObject, ObjectWithID, IMetaObject):
@@ -118,7 +124,15 @@ class IStanDataMeta(IPrettyPrintable, IObjectWithID):
 
 
 class IStanData(IObjectWithMeta, IStanDataMeta):
-    pass
+    @abstractmethod
+    @property
+    def data_json_file(self) -> Path:
+        ...
+
+    @abstractmethod
+    @property
+    def data_dict(self) -> dict[str, np.ndarray | int | float]:
+        ...
 
 
 class IStanModelMeta(IPrettyPrintable, IObjectWithID):
@@ -137,20 +151,125 @@ class IStanModelMeta(IPrettyPrintable, IObjectWithID):
     def is_canonical(self) -> bool:
         ...
 
-    @overrides
-    def pretty_print(self) -> str:
-        ans = f"{str(type(self).__name__)} {self.object_id[0:5]} with name {self.model_name}:\n"
-        ans += f"Hash: {self.object_id}, Code hash: {self.model_code_hash}\n"
-        return ans
-
-
-class IStanModel(IObjectWithMeta, IStanModelMeta):
     @property
     @abstractmethod
-    def model_opts(self) -> dict[str, Any]:
+    def compilation_time(self) -> float | None:
         ...
 
     @property
     @abstractmethod
+    def compilation_size(self) -> int | None:
+        ...
+
+    @property
+    @abstractmethod
+    def is_compiled(self) -> bool:
+        ...
+
+    @overrides
+    def pretty_print(self) -> str:
+        ans = f"{str(type(self).__name__)} {self.object_id[0:5]} with name {self.model_name}:\n"
+        ans += f"Hash: {self.object_id}, Code hash: {self.model_code_hash}\n"
+        if self.is_compiled:
+            ans += f"Compiled for {humanize.naturaldelta(self.compilation_time)} for an executable with the size of {humanize.naturalsize(self.compilation_size)}\n"
+        else:
+            ans += "Model has not been compiled\n"
+        return ans
+
+
+class IStanModel(IObjectWithMeta, IStanModelMeta):
+
+    @property
+    @abstractmethod
     def model_code(self) -> str:
+        ...
+
+    @abstractmethod
+    def make_sure_is_compiled(self) -> None | cmdstanpy.CmdStanModel:
+        ...
+
+    @property
+    @abstractmethod
+    def compilation_options(self) -> dict[str, Any]:
+        ...
+
+    @property
+    @abstractmethod
+    def stanc_options(self) -> dict[str, Any]:
+        ...
+
+    @property
+    @abstractmethod
+    def model_filename(self) -> Path | None:
+        ...
+
+
+class IStanRunMeta(IPrettyPrintable, IObjectWithID):
+    @property
+    @abstractmethod
+    def all_options(self) -> dict[str, Any]:
+        ...
+
+    @property
+    @abstractmethod
+    def output_scope(self) -> StanOutputScope:
+        ...
+
+    @property
+    @abstractmethod
+    def run_engine(self) -> StanResultEngine:
+        ...
+
+    @property
+    @abstractmethod
+    def sample_count(self) -> int:
+        ...
+
+    @abstractmethod
+    def get_data(self) -> IStanDataMeta:
+        ...
+
+    @abstractmethod
+    def get_model(self) -> IStanModelMeta:
+        ...
+
+    @overrides
+    def pretty_print(self) -> str:
+        """Pretty-prints the run. Provide information of the model and data, engine to be used, output scope and a table of all the options. """
+        ans = f""""
+        Run {self.object_id[0:5]} to be used with engine {self._run_engine.txt_value()}
+
+* Model:
+{self.get_model().pretty_print()}
+
+* Data:
+{self.get_data().pretty_print()}
+
+* Options:
+"""
+        # Pretty table with the options
+        table = PrettyTable()
+        table.field_names = ["Option", "Value"]
+        for k, v in self.all_options.items():
+            table.add_row([k, v])
+
+        ans += str(table)
+        ans += f"""
+Return scope: {self.output_scope.txt_value()}
+"""
+        return ans
+
+
+class IResultPromise(ABC):
+    pass
+
+
+class IStanRun(IObjectWithMeta, IStanRunMeta):
+    @abstractmethod
+    def run(self) -> IResultPromise:
+        ...
+
+    @property
+    @abstractmethod
+    def run_folder(self) -> str:
         ...
