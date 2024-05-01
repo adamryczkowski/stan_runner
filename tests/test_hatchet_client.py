@@ -10,7 +10,7 @@ from cmdstanpy.cmdstan_args import CmdStanArgs
 from cmdstanpy.stanfit.vb import CmdStanVB
 from cmdstanpy.stanfit.vb import RunSet
 
-from stan_runner import *
+from src.stan_runner import *
 
 register_server()
 

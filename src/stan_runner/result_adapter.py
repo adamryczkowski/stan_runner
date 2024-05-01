@@ -258,7 +258,7 @@ class InferenceResult(ILocalInferenceResult):
             raise ValueError("Unknown result type")
 
     @overrides
-    def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
+    def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
         if self._result is None:
             raise ValueError("No result available")
         elif self.result_type != StanResultEngine.NONE:
@@ -406,3 +406,15 @@ class InferenceResult(ILocalInferenceResult):
             zip_path.unlink()
 
         return output
+
+    @property
+    @overrides
+    def runtime(self) -> timedelta | None:
+        return self._runtime
+
+    @overrides
+    async def get_progress(self) -> tuple[str, list[float]]:
+        pass
+
+
+

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from stan_runner import CmdStanRunner
+from src.stan_runner import CmdStanRunner
 
 from scipy.stats import random_correlation
 

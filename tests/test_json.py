@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 import numpy as np
 
-from stan_runner import CmdStanRunner
+from src.stan_runner import CmdStanRunner
 import cmdstanpy
 
 def model()->str:

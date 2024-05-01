@@ -1,4 +1,4 @@
-from stan_runner import *
+from src.stan_runner import *
 import nats
 import asyncio
 import time

@@ -194,7 +194,7 @@ class CmdStanRunner(IStanRunner):
 
         self.messages.update(msg)
 
-        with open(model_filename_tmp.name, 'rb', buffering=0) as f:
+        with open(str(model_filename_tmp), 'rb', buffering=0) as f:
             model_hash = hashlib.file_digest(f, 'sha256').hexdigest()
 
         if model_hash == self._last_model_hash:
@@ -202,7 +202,7 @@ class CmdStanRunner(IStanRunner):
 
         model_filename = find_model_in_cache(self._model_cache, model_name, model_hash)
         if not model_filename.exists():
-            model_filename.write_bytes(Path(model_filename_tmp.name).read_bytes())
+            model_filename.write_bytes(Path(model_filename_tmp).read_bytes())
 
         self._pars_of_interest = pars_list
 

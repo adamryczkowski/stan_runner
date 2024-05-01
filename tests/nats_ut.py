@@ -6,7 +6,7 @@ from asyncio.subprocess import Process
 
 from nats.js.errors import NotFoundError
 import psutil
-from stan_runner import *
+from src.stan_runner import *
 
 
 async def run_the_server() -> Process:

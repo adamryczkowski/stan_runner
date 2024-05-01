@@ -1,4 +1,4 @@
-from stan_runner import infer_param_shapes
+from src.stan_runner import infer_param_shapes
 
 
 def test_infer_param_shapes_0():

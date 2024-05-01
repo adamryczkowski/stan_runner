@@ -6,7 +6,7 @@ description = "Stan model computing runner"  # Optional
 readme = "README.md" # Optional
 
 authors = ["Adam Ryczkowski <adam@statystyka.net>"]
-packages = [{ include = "stan_runner", from = '' }]
+packages = [{ include = "stan_runner", from = 'src' }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -22,8 +22,8 @@ prettytable = "^3.10.0"
 scipy = "^1.12.0"
 cmdstanpy = {version = "^1.2.2", extras = ["all"]} #, git = "https://github.com/stan-dev/cmdstanpy", branch = "develop"}
 adams_text_utils = {git = "https://github.com/adamryczkowski/adams-text-utils.git", branch = "master"}
+nats_foundation = { path = "../nats_foundation/", develop = true }
 humanize = "^4.9.0"
-hatchet-sdk = "^0.18.0"
 load-dotenv = "^0.1.0"
 jsonpickle = "^3.0.4"
 nats-py = "^2.7.2"

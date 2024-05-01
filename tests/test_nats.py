@@ -1,6 +1,6 @@
 from nats import NATS
 import signal
-from stan_runner import *
+from src.stan_runner import *
 
 def test_stream():
     stream = create_stream("nats://localhost:43579", True, "test_stream")

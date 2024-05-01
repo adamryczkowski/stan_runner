@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from stan_runner import CmdStanRunner
+from src.stan_runner import CmdStanRunner
 import cmdstanpy
 
 
@@ -114,7 +114,7 @@ def model_generator_array(total_dim: list[int],
 
 def test_model(model_code: str, data: dict[str, str]):
     # model_cache_dir should be an absolute string of the model_cache directory in the project's folder.
-    model_cache_dir = Path(__file__).parent / "model_cache"
+    model_cache_dir = Path(__file__).parent.parent / "model_cache"
 
     runner = CmdStanRunner(model_cache=model_cache_dir)
     runner.install_dependencies()

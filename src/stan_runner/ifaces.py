@@ -167,10 +167,6 @@ class IInferenceResult(ABC):
     async def all_main_effects(self) -> dict[str, IValueWithError]:
         ...
 
-    @abstractmethod
-    async def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
-        ...
-
     async def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
         cov_matrix, one_dim_names = await self.get_cov_matrix(user_parameter_names)
         out = prettytable.PrettyTable()
@@ -281,10 +277,6 @@ class IInferenceResult(ABC):
         else:
             return f"Run taken: {humanize.precisedelta(self.runtime)}"
 
-    @property
-    @abstractmethod
-    def is_computed(self) -> bool:
-        ...
 
     @abstractmethod
     async def get_progress(self) -> tuple[str, list[float]]:
@@ -410,7 +402,7 @@ class ILocalInferenceResult(IInferenceResult):
 
         for i, name1 in enumerate(onedim_parameter_names):
             for j, name2 in enumerate(onedim_parameter_names):
-                cov_matrix[i, j] = self.get_cov(name1, name2)
+                cov_matrix[i, j] = self.get_cov_onedim_par(name1, name2)
 
         return cov_matrix, onedim_parameter_names
 
@@ -535,7 +527,7 @@ class ILocalInferenceResult(IInferenceResult):
         ...
 
     @abstractmethod
-    def get_cov(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
+    def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
         ...
 
 

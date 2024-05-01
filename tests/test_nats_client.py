@@ -4,7 +4,7 @@ import time
 import nats.errors
 import nats.js.errors
 
-from stan_runner import *
+from src.stan_runner import *
 
 
 def test1():

@@ -1,5 +1,5 @@
-import stan_runner.hatchet_utils
-from stan_runner import *
+from src import stan_runner
+from src.stan_runner import *
 
 from hatchet_sdk import Hatchet, WorkflowList
 from hatchet_sdk.client import ClientImpl
