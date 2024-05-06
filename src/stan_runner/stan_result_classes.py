@@ -5,10 +5,10 @@ import prettytable
 from ValueWithError import ValueWithError, ValueWithErrorVec
 from overrides import overrides
 
-from .ifaces import IStanResult, IStanResultCov
+from .ifaces import IInferenceResult
 
 
-class StanResultMainEffects(IStanResult):
+class StanResultMainEffects(IInferenceResult):
     _one_dim_pars: dict[str, ValueWithError]
     _par_dimensions: dict[str, list[int]]
 

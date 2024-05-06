@@ -38,7 +38,7 @@ class StanRunMeta(IStanRunMeta, MetaObjectBase):
 
     @property
     @overrides
-    def all_options(self) -> dict[str, Any]:
+    def run_opts(self) -> dict[str, Any]:
         return self._run_opts
 
     @property
@@ -57,11 +57,11 @@ class StanRunMeta(IStanRunMeta, MetaObjectBase):
         return self._run_opts["sample_count"]
 
     @overrides
-    def get_data(self) -> IStanDataMeta:
+    def get_data_meta(self) -> IStanDataMeta:
         return self._data
 
     @overrides
-    def get_model(self) -> IStanModelMeta:
+    def get_model_meta(self) -> IStanModelMeta:
         return self._model
 
     @overrides
@@ -112,7 +112,7 @@ class StanRun(IStanRun, IMetaObjectBase):
 
     @property
     @overrides
-    def all_options(self) -> dict[str, Any]:
+    def run_opts(self) -> dict[str, Any]:
         return self._run_opts
 
     @property
@@ -131,14 +131,14 @@ class StanRun(IStanRun, IMetaObjectBase):
         return self._run_opts["sample_count"]
 
     @overrides
-    def get_data(self) -> IStanDataMeta:
+    def get_data_meta(self) -> IStanDataMeta:
         # noinspection PyTypeChecker
-        return self._data.get_metaobject()
+        return self._data
 
     @overrides
-    def get_model(self) -> IStanModelMeta:
+    def get_model_meta(self) -> IStanModelMeta:
         # noinspection PyTypeChecker
-        return self._model.get_metaobject()
+        return self._model
 
     @overrides
     def __getstate__(self) -> dict:

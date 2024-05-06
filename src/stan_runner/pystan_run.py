@@ -46,11 +46,11 @@ def compile_model(model: IStanModel) -> tuple[float, Path | None, dict, cmdstanp
 
 
 def run(obj: IStanRun) -> IInferenceResult:
-    model = obj.get_model()
+    model = obj.get_model_meta()
     assert isinstance(model, IStanModel)
     model.make_sure_is_compiled()
 
-    data = obj.get_data()
+    data = obj.get_data_meta()
     assert isinstance(data, IStanData)
 
     stdout = io.StringIO()
@@ -69,8 +69,8 @@ def run(obj: IStanRun) -> IInferenceResult:
         engine = pystan_model.variational
     elif obj.run_engine == StanResultEngine.MCMC:
         threads_per_chain = 1
-        if "chains" in obj.all_options:
-            num_chains = obj.all_options["chains"]
+        if "chains" in obj.run_opts:
+            num_chains = obj.run_opts["chains"]
         else:
             num_chains = 1
         number_of_cores = cpu_count()
@@ -80,8 +80,8 @@ def run(obj: IStanRun) -> IInferenceResult:
             if number_of_cores > num_chains:
                 threads_per_chain = number_of_cores // num_chains
 
-        obj.all_options["threads_per_chain"] = threads_per_chain
-        obj.all_options["parallel_chains"] = parallel_chains
+        obj.run_opts["threads_per_chain"] = threads_per_chain
+        obj.run_opts["parallel_chains"] = parallel_chains
 
         engine = pystan_model.sample
     else:
@@ -91,7 +91,7 @@ def run(obj: IStanRun) -> IInferenceResult:
         try:
             ans = engine(data=data.data_json_file, draws=obj.sample_count,
                          output_dir=obj.run_folder,
-                         **obj.all_options)
+                         **obj.run_opts)
         except subprocess.CalledProcessError as e:
             messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
             return InferenceResult(None, messages)

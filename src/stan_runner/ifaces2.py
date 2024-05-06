@@ -14,6 +14,8 @@ from overrides import overrides
 from prettytable import PrettyTable
 import humanize
 import cmdstanpy
+from datetime import timedelta
+from ValueWithError import IValueWithError
 
 from .ifaces import StanResultEngine, StanOutputScope
 
@@ -207,7 +209,7 @@ class IStanModel(IObjectWithMeta, IStanModelMeta):
 class IStanRunMeta(IPrettyPrintable, IObjectWithID):
     @property
     @abstractmethod
-    def all_options(self) -> dict[str, Any]:
+    def run_opts(self) -> dict[str, Any]:
         ...
 
     @property
@@ -226,31 +228,31 @@ class IStanRunMeta(IPrettyPrintable, IObjectWithID):
         ...
 
     @abstractmethod
-    def get_data(self) -> IStanDataMeta:
+    def get_data_meta(self) -> IStanDataMeta:
         ...
 
     @abstractmethod
-    def get_model(self) -> IStanModelMeta:
+    def get_model_meta(self) -> IStanModelMeta:
         ...
 
     @overrides
     def pretty_print(self) -> str:
         """Pretty-prints the run. Provide information of the model and data, engine to be used, output scope and a table of all the options. """
         ans = f""""
-        Run {self.object_id[0:5]} to be used with engine {self._run_engine.txt_value()}
+        Run {self.object_id[0:5]} to be used with engine {self.run_engine.txt_value()}. Requested result scope: {self.output_scope.txt_value()}
 
 * Model:
-{self.get_model().pretty_print()}
+{self.get_model_meta().pretty_print()}
 
 * Data:
-{self.get_data().pretty_print()}
+{self.get_data_meta().pretty_print()}
 
 * Options:
 """
         # Pretty table with the options
         table = PrettyTable()
         table.field_names = ["Option", "Value"]
-        for k, v in self.all_options.items():
+        for k, v in self.run_opts.items():
             table.add_row([k, v])
 
         ans += str(table)
@@ -272,4 +274,203 @@ class IStanRun(IObjectWithMeta, IStanRunMeta):
     @property
     @abstractmethod
     def run_folder(self) -> str:
+        ...
+
+
+class IStanResultMeta(IMetaObjectBase, IPrettyPrintable, IObjectWithID):
+    @property
+    @abstractmethod
+    def is_error(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
+    def runtime(self) -> timedelta | None:
+        ...
+
+    @property
+    @abstractmethod
+    def data_hash(self) -> int:
+        ...
+
+    @property
+    @abstractmethod
+    def model_hash(self) -> int:
+        ...
+
+    @property
+    @abstractmethod
+    def run_hash(self) -> int:
+        ...
+
+    @abstractmethod
+    def get_data_meta(self) -> IStanDataMeta:
+        ...
+
+    @abstractmethod
+    def get_model_meta(self) -> IStanModelMeta:
+        ...
+
+    @abstractmethod
+    def get_run_meta(self) -> IStanRunMeta:
+        ...
+
+    @property
+    @abstractmethod
+    def result_type(self) -> StanResultEngine:
+        ...
+
+    @property
+    @abstractmethod
+    def output_scope(self) -> StanOutputScope:
+        ...
+
+    @property
+    @abstractmethod
+    def one_dim_parameters_count(self) -> int:
+        ...
+
+    @abstractmethod
+    def get_onedim_parameter_names(self, user_parameter_name: str) -> list[str]:
+        ...
+
+    @property
+    @abstractmethod
+    def user_parameters(self) -> list[str]:
+        ...
+
+    @property
+    @abstractmethod
+    def onedim_parameters(self) -> list[str]:
+        ...
+
+    @abstractmethod
+    def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
+        ...
+
+    @abstractmethod
+    def sample_count(self, onedim_parameter_name: str = None) -> float | int | None:
+        ...
+
+    @abstractmethod
+    def formatted_runtime(self) -> str:
+        ...
+
+    @abstractmethod
+    def repr_with_sampling_errors(self):
+        ...
+
+    @abstractmethod
+    def repr_without_sampling_errors(self):
+        ...
+
+    @property
+    @abstractmethod
+    def method_name(self) -> str:
+        ...
+
+
+class ImplementationOfUser2OneDim(ABC):
+    @abstractmethod
+    def _get_user2onedim(self) -> dict[str, list[str]]:
+        pass
+
+    @abstractmethod
+    def _get_user2dim(self) -> dict[str, tuple[int, ...]]:
+        pass
+
+    @property
+    # @overrides
+    def one_dim_parameters_count(self) -> int:
+        return len(self._get_user2onedim())
+
+    # @overrides
+    def get_onedim_parameter_names(self, user_parameter_name: str) -> list[str]:
+        return self._get_user2onedim()[user_parameter_name]
+
+    @property
+    # @overrides
+    def user_parameters(self) -> list[str]:
+        return list(self._get_user2onedim().keys())
+
+    @property
+    # @overrides
+    def onedim_parameters(self) -> list[str]:
+        return [item for sublist in self._get_user2onedim().values() for item in sublist]
+
+    # @overrides
+    def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
+        return self._get_user2dim()[user_parameter_name]
+
+
+class IStanResultBase(IObjectWithMeta, IStanResultMeta):
+    @abstractmethod
+    def get_parameter_estimates(self, user_parameter_name: str,
+                                store_values: bool = False) -> Any:  # Sufficiently nested list of IValueWithError
+        ...
+
+    @abstractmethod
+    def get_onedim_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> IValueWithError:
+        ...
+
+    @abstractmethod
+    def get_parameter_mu(self, user_parameter_name: str) -> np.ndarray:
+        ...
+
+    @abstractmethod
+    def get_parameter_sigma(self, user_parameter_name: str) -> np.ndarray:
+        ...
+
+    @abstractmethod
+    def all_main_effects_onedim_par(self) -> dict[str, IValueWithError]:
+        ...
+
+    @property
+    @abstractmethod
+    def messages(self) -> str:
+        ...
+
+    @property
+    @abstractmethod
+    def warnings(self) -> str:
+        ...
+
+    @property
+    @abstractmethod
+    def errors(self) -> str:
+        ...
+
+
+class IStanResultCovariances(IStanResultBase):
+    @abstractmethod
+    def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
+        ...
+
+    @abstractmethod
+    def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
+        ...
+
+    @abstractmethod
+    def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
+        ...
+
+
+class IStanResultFullSamples(IStanResultCovariances):
+    @abstractmethod
+    def draws(self, onedim_varname:str) -> np.ndarray:
+        ...
+
+
+class IStanResultRawResult(IStanResultFullSamples):
+    @abstractmethod
+    @property
+    def get_raw_result(self) -> Any:  # e.g. CmdStanVB
+        ...
+
+    @abstractmethod
+    def draws_of_all_variables(self, bInclSpecial:bool=False) -> tuple[np.ndarray, tuple[str, ...]]:
+        ...
+
+    @abstractmethod
+    def serialize_to_file(self) -> Path:
         ...

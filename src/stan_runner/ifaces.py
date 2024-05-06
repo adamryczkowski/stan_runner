@@ -10,6 +10,8 @@ import humanize
 import numpy as np
 import prettytable
 from ValueWithError import IValueWithError
+from nats_foundation import IPrettyPrintable, IObjectWithID
+from .ifaces2 import IStanDataMeta, IStanModelMeta, IStanRunMeta
 from cmdstanpy import CmdStanMCMC
 
 
@@ -97,15 +99,7 @@ class StanOutputScope(Enum):
 
 
 class IInferenceResult(ABC):
-    @property
-    @abstractmethod
-    async def is_error(self) -> bool:
-        ...
 
-    @property
-    @abstractmethod
-    def runtime(self) -> timedelta | None:
-        ...
 
     @property
     @abstractmethod
@@ -113,16 +107,6 @@ class IInferenceResult(ABC):
         ...
 
     async def get_onedim_parameter_names(self, user_parameter_name: str) -> list[str]:
-        ...
-
-    @property
-    @abstractmethod
-    def result_type(self) -> StanResultEngine:
-        ...
-
-    @property
-    @abstractmethod
-    def result_scope(self) -> StanOutputScope:
         ...
 
     @property
@@ -225,10 +209,6 @@ class IInferenceResult(ABC):
 
         return out + str(table)
 
-    @property
-    @abstractmethod
-    def method_name(self) -> str:
-        ...
 
     async def repr_without_sampling_errors(self):
         # Table example:
