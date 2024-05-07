@@ -1,31 +1,27 @@
+import base64
+import pickle
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-
-from .stan_result_base import ImplStanResultMetaWithUser2Onedim, ImplStanResultBase, ImplCovarianceInterface, \
-    ImplValueWithError
-from .ifaces2 import IStanRun, IStanRunMeta, IStanResultBase, IStanResultCovariances, IStanResultFullSamples, \
-    IStanResultRawResult, ImplementationOfUser2OneDim
 from ValueWithError import ValueWithError, IValueWithError, ValueWithErrorVec
-from overrides import overrides
-from .utils import infer_param_shapes
-from nats_foundation import create_dict_serializable_copy
 from cmdstanpy import CmdStanLaplace, CmdStanVB, CmdStanMCMC, CmdStanPathfinder
 from cmdstanpy.cmdstan_args import CmdStanArgs
 from cmdstanpy.stanfit.vb import RunSet
-from pathlib import Path
+from nats_foundation import create_dict_serializable_copy
+from overrides import overrides
+
 from .ifaces import StanResultEngine
-import pickle
-import tempfile
-import base64
-import shutil
-
-import humanize
-import datetime
-from abc import abstractmethod, ABC
+from .ifaces2 import IStanRun, IStanResultBase, IStanResultCovariances, IStanResultFullSamples, \
+    IStanResultRawResult
+from .stan_result_base import ImplStanResultMetaWithUser2Onedim, ImplStanResultBase, ImplCovarianceInterface, \
+    ImplValueWithError
+from .utils import infer_param_shapes
 
 
-class StanResultMainEffects(ImplStanResultBase, IStanResultBase, ImplStanResultMetaWithUser2Onedim, ImplValueWithError):
+class StanResultMainEffects(ImplStanResultBase, ImplStanResultMetaWithUser2Onedim, ImplValueWithError, IStanResultBase):
     _one_dim_pars: dict[str, ValueWithError]
 
     _user2dim: dict[str, tuple[int, ...]]  # Caches the shape of the parameters including the sample count
@@ -58,14 +54,6 @@ class StanResultMainEffects(ImplStanResultBase, IStanResultBase, ImplStanResultM
         d = super().__getstate__()
         d["one_dim_pars"] = {k: v.__getstate__() for k, v in self._one_dim_pars.items()}
         return d
-
-    @overrides
-    def draws(self, incl_raw: bool = True) -> np.ndarray | None:
-        return None
-
-    @overrides
-    def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray | None:
-        return None
 
     @overrides
     def get_onedim_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> IValueWithError:
@@ -136,7 +124,7 @@ class StanResultCovariances(ImplStanResultMetaWithUser2Onedim, ImplStanResultBas
         return create_dict_serializable_copy(d)
 
     @overrides
-    def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray | None:
+    def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
         idx1 = self._onedim2idx[one_dim_par1]
         idx2 = self._onedim2idx[one_dim_par2]
         return float(self._covariances[idx1, idx2])
@@ -394,4 +382,3 @@ class StanResultRawResult(ImplStanResultBase, ImplCovarianceInterface, ImplValue
     def _get_user2dim(self) -> dict[str, tuple[int, ...]]:
         self._get_meta()
         return self._user2dim
-

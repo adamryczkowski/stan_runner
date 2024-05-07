@@ -8,9 +8,10 @@ from typing import Any
 
 import cmdstanpy
 
-from .ifaces import StanResultEngine, IInferenceResult
+from .ifaces import StanResultEngine
 from .ifaces2 import IStanRun, IStanModel, IStanData
-from .result_adapter import InferenceResult
+from .stan_result_scopes import StanResultRawResult, IStanResultRawResult
+# from .result_adapter import InferenceResult
 
 
 def compile_model(model: IStanModel) -> tuple[float, Path | None, dict, cmdstanpy.CmdStanModel | None]:
@@ -45,7 +46,7 @@ def compile_model(model: IStanModel) -> tuple[float, Path | None, dict, cmdstanp
     return time_taken, exe_file, {"output": stdout.getvalue(), "compile_warning": stderr.getvalue()}, model
 
 
-def run(obj: IStanRun) -> IInferenceResult:
+def run(obj: IStanRun) -> IStanResultRawResult:
     model = obj.get_model_meta()
     assert isinstance(model, IStanModel)
     model.make_sure_is_compiled()
@@ -94,10 +95,10 @@ def run(obj: IStanRun) -> IInferenceResult:
                          **obj.run_opts)
         except subprocess.CalledProcessError as e:
             messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-            return InferenceResult(None, messages)
+            return StanResultRawResult(run=obj, output=stdout.getvalue(), warnings="", errors=stderr.getvalue(), runtime=time.time() - time_now, result=None)
 
     time_taken = time.time() - time_now
 
     messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
-    out = InferenceResult(ans, messages, runtime=time_taken)
+    out = StanResultRawResult(run=obj, output=stdout.getvalue(), warnings="", errors=stderr.getvalue(), runtime=time_taken, result=ans)
     return out

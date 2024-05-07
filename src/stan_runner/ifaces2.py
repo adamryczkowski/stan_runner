@@ -126,13 +126,13 @@ class IStanDataMeta(IPrettyPrintable, IObjectWithID):
 
 
 class IStanData(IObjectWithMeta, IStanDataMeta):
-    @abstractmethod
     @property
+    @abstractmethod
     def data_json_file(self) -> Path:
         ...
 
-    @abstractmethod
     @property
+    @abstractmethod
     def data_dict(self) -> dict[str, np.ndarray | int | float]:
         ...
 
@@ -266,7 +266,7 @@ class IResultPromise(ABC):
     pass
 
 
-class IStanRun(IObjectWithMeta, IStanRunMeta):
+class IStanRun(ISerializableObject, IObjectWithMeta, IStanRunMeta):
     @abstractmethod
     def run(self) -> IResultPromise:
         ...
@@ -462,8 +462,8 @@ class IStanResultFullSamples(IStanResultCovariances):
 
 
 class IStanResultRawResult(IStanResultFullSamples):
-    @abstractmethod
     @property
+    @abstractmethod
     def get_raw_result(self) -> Any:  # e.g. CmdStanVB
         ...
 

@@ -1,8 +1,8 @@
 # from .rpy_runner import RPyRunner
 # print("Loading cmdstan_runner...")
-from .cmdstan_runner import CmdStanRunner
+# from .cmdstan_runner import CmdStanRunner
 # print("Loading result_adapter...")
-from .result_adapter import InferenceResult
+# from .result_adapter import InferenceResult
 # # print("Loading hatchet_worker...")
 # from .hatchet_worker import register_worker, run_worker
 # # print("Loading hatchet_client...")
@@ -14,6 +14,9 @@ from .ifaces import StanOutputScope, StanErrorType, StanResultEngine
 from .utils import  infer_param_shapes
 from .data import StanData, StanDataMeta
 from .model import StanModel, StanModelMeta
+from .stan_result_scopes import StanResultMainEffects, StanResultCovariances, StanResultFullSamples, StanResultRawResult
+from .stan_result_base import StanResultMeta
+from .runner import StanRun, StanRunMeta
 # from .nats_utils import *
 # from .nats_message_broker import MessageBroker
 # from .nats_worker import NatsWorker
