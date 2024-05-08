@@ -8,6 +8,7 @@ from subprocess import run
 from typing import Any
 
 import cmdstanpy
+import copy
 
 from .ifaces import StanResultEngine, StanOutputScope
 from .ifaces2 import IStanRun, IStanModel, IStanData, IStanResultBase
@@ -74,39 +75,45 @@ def run(obj: IStanRun) -> IStanResultBase:
     stderr = io.StringIO()
 
     pystan_model = model.make_sure_is_compiled()
+    assert model.is_compiled
 
     time_now = time.time()
 
     engine: Any
+    run_opts = copy.deepcopy(obj.run_opts)
     if obj.run_engine == StanResultEngine.PATHFINDER:
         engine = pystan_model.pathfinder
-        obj.run_opts["draws"] = obj.run_opts["sample_count"]
-        del obj.run_opts["sample_count"]
+        run_opts["draws"] = obj.run_opts["sample_count"]
+        del run_opts["sample_count"]
     elif obj.run_engine == StanResultEngine.LAPLACE:
         engine = pystan_model.laplace_sample
-        obj.run_opts["draws"] = obj.run_opts["sample_count"]
-        del obj.run_opts["sample_count"]
+        run_opts["draws"] = obj.run_opts["sample_count"]
+        del run_opts["sample_count"]
     elif obj.run_engine == StanResultEngine.VB:
         engine = pystan_model.variational
-        obj.run_opts["draws"] = obj.run_opts["sample_count"]
-        del obj.run_opts["sample_count"]
+        run_opts["draws"] = obj.run_opts["sample_count"]
+        del run_opts["sample_count"]
     elif obj.run_engine == StanResultEngine.MCMC:
         threads_per_chain = 1
         if "chains" in obj.run_opts:
             num_chains = obj.run_opts["chains"]
+        elif "parallel_chains" in obj.run_opts:
+            num_chains = obj.run_opts["parallel_chains"]
         else:
             num_chains = 1
         number_of_cores = cpu_count()
         parallel_chains = min(num_chains, number_of_cores)
         threads_per_chain = 1
-        if "STAN_THREADS" in model.compilation_options and model.compilation_options["STAN_THREADS"] == True:
-            if number_of_cores > num_chains:
-                threads_per_chain = number_of_cores // num_chains
+        if number_of_cores > num_chains:
+            threads_per_chain = number_of_cores // num_chains
 
-        obj.run_opts["threads_per_chain"] = threads_per_chain
-        obj.run_opts["chains"] = parallel_chains
-        obj.run_opts["iter_sampling"] = obj.run_opts["sample_count"] // parallel_chains
-        del obj.run_opts["sample_count"]
+        run_opts["threads_per_chain"] = threads_per_chain
+        if "STAN_THREADS" in model.exe_metadata and model.exe_metadata["STAN_THREADS"] == True:
+            run_opts["parallel_chains"] = parallel_chains
+        else:
+            run_opts["chains"] = parallel_chains
+        run_opts["iter_sampling"] = obj.run_opts["sample_count"] // parallel_chains
+        del run_opts["sample_count"]
 
 
         engine = pystan_model.sample
@@ -117,7 +124,7 @@ def run(obj: IStanRun) -> IStanResultBase:
         try:
             ans = engine(data=data.data_json_file,
                          output_dir=obj.run_folder,
-                         **obj.run_opts)
+                         **run_opts)
         except subprocess.CalledProcessError as e:
             messages = {"stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
             return StanResultRawResult(run=obj, output=stdout.getvalue(), warnings="", errors=stderr.getvalue(),

@@ -12,11 +12,13 @@ from overrides import overrides
 from ValueWithError import ValueWithError, IValueWithError
 from . import StanResultEngine, StanOutputScope
 from .ifaces2 import IStanResultBase, IMetaObjectBase, IStanDataMeta, IStanModelMeta, \
-    IStanRunMeta,     IStanRun, IStanResultMeta, IStanResultCovariances
+    IStanRunMeta, IStanRun, IStanResultMeta, IStanResultCovariances
 from .utils import infer_param_shapes
 import datetime
 
+
 class ImplStanResultMetaWithUser2Onedim(IStanResultMeta):
+
     @abstractmethod
     def _get_user2onedim(self) -> dict[str, list[str]]:
         pass
@@ -46,8 +48,28 @@ class ImplStanResultMetaWithUser2Onedim(IStanResultMeta):
 
     @overrides
     def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
-        return self._get_user2dim()[user_parameter_name][:-1]
+        return self._get_user2dim()[user_parameter_name]
 
+
+
+class ImplAlgorithmMetadata(IStanResultMeta):
+    _algorithm: str
+
+    def __init__(self, algorithm: str, **kwargs):
+        super().__init__(**kwargs)
+        assert isinstance(algorithm, str)
+        self._algorithm = algorithm
+
+    @property
+    @overrides
+    def requested_algorithm_variation(self) -> str:
+        return self._algorithm
+
+    @overrides
+    def __getstate__(self) -> dict:
+        d = super().__getstate__()
+        d["algorithm"] = self._algorithm
+        return d
 
 
 class StanResultMeta(ImplStanResultMetaWithUser2Onedim, IStanResultMeta):
@@ -55,18 +77,16 @@ class StanResultMeta(ImplStanResultMetaWithUser2Onedim, IStanResultMeta):
     _errors: str
     _run: IStanRunMeta
     _method_name: str
-    _algorithm:str
     _user2onedim: dict[str, list[str]] | None  # Translates user parameter names to one-dim parameter names
     _user2dim: dict[str, tuple[int, ...]] | None  # Translates user parameter names to shapes
 
-
     def __init__(self, run: IStanRunMeta, runtime: float, errors: str, method_name: str,
-                 onedim_names: list[str] | set[str], sample_count: int, algorithm:str):
+                 onedim_names: list[str] | set[str], sample_count: int, **kwargs):
+        super().__init__(**kwargs)
         assert isinstance(run, IStanRunMeta)
         assert isinstance(runtime, float)
         assert isinstance(errors, str)
         assert isinstance(method_name, str)
-        assert isinstance(algorithm, str)
         assert onedim_names is not None
         if isinstance(onedim_names, list):
             assert len(onedim_names) == len(set(onedim_names))
@@ -78,7 +98,6 @@ class StanResultMeta(ImplStanResultMetaWithUser2Onedim, IStanResultMeta):
         self._runtime = runtime
         self._errors = errors
         self._method_name = method_name
-        self._algorithm = algorithm
 
     @overrides
     def _get_user2onedim(self) -> dict[str, list[str]]:
@@ -173,6 +192,7 @@ Run:
         d["model_hash"] = self.model_hash
         d["data_hash"] = self.data_hash
         d["output_scope"] = self.output_scope.txt_value()
+        d["algorithm"] = self._algorithm
 
         return d
 
@@ -195,11 +215,6 @@ Run:
     def method_name(self) -> str:
         return self._method_name
 
-    @property
-    @overrides
-    def requested_algorithm_variation(self) -> str:
-        return self._algorithm
-
 
 class ImplStanResultBase(IStanResultBase):
     _run: IStanRun
@@ -208,7 +223,8 @@ class ImplStanResultBase(IStanResultBase):
     _errors: str
     _runtime: float
 
-    def __init__(self, run: IStanRun, output: str, warnings: str, errors: str, runtime: float):
+    def __init__(self, run: IStanRun, output: str, warnings: str, errors: str, runtime: float, **kwargs):
+        super().__init__(**kwargs)
         assert isinstance(run, IStanRun)
         assert isinstance(output, str)
         assert isinstance(warnings, str)
@@ -285,7 +301,6 @@ class ImplStanResultBase(IStanResultBase):
         d["model_hash"] = self.model_hash
         d["data_hash"] = self.data_hash
         d["output_scope"] = self.output_scope.txt_value()
-
         return d
 
     @property
@@ -315,10 +330,10 @@ class ImplStanResultBase(IStanResultBase):
 
         table = prettytable.PrettyTable()
         table.field_names = ["Parameter", "index", "mu", "sigma", "10%", "90%"]
-        for onedim_par in self.user_parameters:
-            dims = self.get_parameter_shape(onedim_par)
+        for user_par in self.user_parameters:
+            dims = self.get_parameter_shape(user_par)
             if len(dims) == 0 or (len(dims) == 1 and dims[0] == 1):
-                par_name = onedim_par
+                par_name = user_par
                 par_value = self.get_onedim_parameter_estimate(par_name)
                 ci = par_value.get_CI(0.8)
                 table.add_row([par_name, "", str(par_value.estimateMean()), str(par_value.estimateSE()),
@@ -327,10 +342,10 @@ class ImplStanResultBase(IStanResultBase):
                 max_idx = math.prod(dims)
                 idx = [0 for _ in dims]
                 i = 0
-                par_txt = onedim_par
+                par_txt = user_par
                 while i < max_idx:
                     idx_txt = "[" + ",".join([str(i + 1) for i in idx]) + "]"
-                    par_name = f"{onedim_par}{idx_txt}"
+                    par_name = f"{user_par}{idx_txt}"
                     par_value = self.get_onedim_parameter_estimate(par_name)
                     ci = par_value.get_CI(0.8)
                     table.add_row([par_txt, idx_txt, str(par_value.estimateMean()), str(par_value.estimateSE()),
@@ -347,10 +362,10 @@ class ImplStanResultBase(IStanResultBase):
 
     @overrides
     def get_parameter_estimates(self, user_parameter_name: str, store_values: bool = False) -> Any:
-        values = np.asarray([self.get_onedim_parameter_estimate(name) for name in self.get_onedim_parameter_names(user_parameter_name)])
+        values = np.asarray(
+            [self.get_onedim_parameter_estimate(name) for name in self.get_onedim_parameter_names(user_parameter_name)])
         values.shape = self.get_parameter_shape(user_parameter_name)
         return values.tolist()
-
 
     @overrides
     def repr_without_sampling_errors(self):
@@ -435,6 +450,7 @@ class ImplStanResultBase(IStanResultBase):
     def pretty_print(self) -> str:
         return self.__repr__()
 
+
 class ImplCovarianceInterface(IStanResultCovariances):
     @overrides
     def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
@@ -446,10 +462,10 @@ class ImplCovarianceInterface(IStanResultCovariances):
         else:
             one_dim_names = self.onedim_parameters
 
-        cov_matrix = np.asarray([self.get_cov_onedim_par(name1, name2) for name1 in one_dim_names for name2 in one_dim_names])
+        cov_matrix = np.asarray(
+            [self.get_cov_onedim_par(name1, name2) for name1 in one_dim_names for name2 in one_dim_names])
 
         return cov_matrix, one_dim_names
-
 
     @overrides
     def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
@@ -462,17 +478,22 @@ class ImplCovarianceInterface(IStanResultCovariances):
         se = np.sqrt(min(np.diag(cov_matrix))) * factor
         digits = int(np.ceil(-np.log10(se))) + 1
 
-        cov_matrix_txt = np.round(cov_matrix, digits)
+        cov_matrix = np.round(cov_matrix, digits)
+        cov_matrix_txt = np.ndarray((len(one_dim_names), len(one_dim_names)), dtype=str).tolist()
+        # Remove upper triangle
+        for i in range(len(one_dim_names)):
+            for j in range(0, i + 1):
+                cov_matrix_txt[i][j] = f"{cov_matrix[i, j]:.4f}"
 
         for i in range(len(one_dim_names)):
             # Suppres scientific notation
-            out.add_row([one_dim_names[i]] + [f"{cov_matrix_txt[i, j]:.4f}" for j in range(len(one_dim_names))])
+            out.add_row([one_dim_names[i]] + [f"{cov_matrix_txt[i][j]}" for j in range(len(one_dim_names))])
         return str(out)
 
     @overrides
     def get_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> tuple[np.ndarray, list[str]]:
         if user_parameter_names is None:
-            user_parameter_names = self.onedim_parameters
+            user_parameter_names = self.user_parameters
         elif isinstance(user_parameter_names, str):
             user_parameter_names = [user_parameter_names]
 
@@ -486,6 +507,7 @@ class ImplCovarianceInterface(IStanResultCovariances):
                 cov_matrix[i, j] = self.get_cov_onedim_par(name1, name2)
 
         return cov_matrix, onedim_parameter_names
+
 
 class ImplValueWithError(IStanResultBase):
     @overrides
@@ -505,7 +527,7 @@ class ImplValueWithError(IStanResultBase):
     @overrides
     def sample_count(self, onedim_parameter_name: str = None) -> float | int | None:
         if onedim_parameter_name is None:
-            obj = self.get_run_meta
+            obj = self.get_run_meta()
             assert isinstance(obj, IStanRunMeta)
             return obj.sample_count
         else:

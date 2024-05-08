@@ -20,15 +20,17 @@ class StanModelMeta(IStanModelMeta, MetaObjectBase):
     _model_code_hash: str
     _compilation_time: float | None
     _executable_size: int | None
+    _metadata: dict[str, Any] |None
 
     def __init__(self, model_hash: int, model_name: str, is_canonical: bool, model_code_hash: str,
-                 compilation_time: float = -1.0, executable_size: int = -1):
+                 compilation_time: float = -1.0, executable_size: int = -1, metadata: dict[str, Any] = None):
         super().__init__(object_hash=model_hash)
         self._model_name = model_name
         self._is_canonical = is_canonical
         self._model_code_hash = model_code_hash
         self._compilation_time = compilation_time
         self._executable_size = executable_size
+        self._metadata = metadata
 
     @overrides
     def __getstate__(self) -> dict:
@@ -36,6 +38,9 @@ class StanModelMeta(IStanModelMeta, MetaObjectBase):
         d["model_name"] = self._model_name
         d["is_canonical"] = self._is_canonical
         d["model_code_hash"] = self._model_code_hash
+        d["compilation_time"] = self._compilation_time
+        d["executable_size"] = self._executable_size
+        d["metadata"] = self._metadata
         return d
 
     @property
@@ -72,6 +77,11 @@ class StanModelMeta(IStanModelMeta, MetaObjectBase):
     def is_compiled(self) -> bool:
         return self._compilation_time >= 0.0
 
+    @property
+    @overrides
+    def exe_metadata(self) -> dict[str, Any]|None:
+        return self._metadata
+
 
 class StanModel(IStanModel, IMetaObjectBase):
     _model_name: str
@@ -81,6 +91,7 @@ class StanModel(IStanModel, IMetaObjectBase):
     _stanc_opts: dict[str, Any]
     _cpp_opts: dict[str, Any]
     _compilation_time: float
+
 
     def __init__(self, model_folder: Path, model_name: str, model_code: str, stanc_opts: dict[str, Any] = None,
                  cpp_opts: dict[str, Any] = None):
@@ -101,7 +112,7 @@ class StanModel(IStanModel, IMetaObjectBase):
         assert isinstance(stanc_opts, dict)
 
         if cpp_opts is None:
-            cpp_opts = {}
+            cpp_opts = {'STAN_THREADS': 'TRUE'}
         assert isinstance(cpp_opts, dict)
 
         super().__init__()
@@ -227,3 +238,11 @@ class StanModel(IStanModel, IMetaObjectBase):
     @overrides
     def model_filename(self) -> Path | None:
         return self._model_file
+
+    @property
+    @overrides
+    def exe_metadata(self) -> dict[str, Any] | None:
+        if self._compiled_model is not None:
+            return self._compiled_model.exe_info()
+        else:
+            return None

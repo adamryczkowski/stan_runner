@@ -21,13 +21,16 @@ class StanRunMeta(IStanRunMeta, MetaObjectBase):
     _run_engine: StanResultEngine
 
     def __init__(self, run_hash: int, output_scope: StanOutputScope, run_engine: StanResultEngine,
-                 run_opts: dict[str, Any], model: IStanModelMeta, data: IStanDataMeta):
+                 run_opts: dict[str, Any], sample_count:int, model: IStanModelMeta, data: IStanDataMeta):
         assert isinstance(model, IStanModelMeta)
         assert isinstance(data, IStanDataMeta)
         assert isinstance(output_scope, StanOutputScope)
         assert isinstance(run_engine, StanResultEngine)
         assert isinstance(run_opts, dict)
-        assert "sample_count" in run_opts
+        if "sample_count" not in run_opts:
+            run_opts["sample_count"] = sample_count
+        else:
+            assert run_opts["sample_count"] == sample_count
 
         super().__init__(run_hash)
         self._run_opts = {}
@@ -84,13 +87,18 @@ class StanRun(IStanRun, IMetaObjectBase):
     _run_engine: StanResultEngine
 
     def __init__(self, run_folder: Path, data: IStanData, model: IStanModel, output_scope: StanOutputScope,
-                 run_engine: StanResultEngine, run_opts: dict[str, Any]):
+                 run_engine: StanResultEngine, sample_count:int, run_opts: dict[str, Any]=None):
         assert isinstance(data, IStanData)
         assert isinstance(model, IStanModel)
         assert isinstance(output_scope, StanOutputScope)
         assert isinstance(run_engine, StanResultEngine)
+        if run_opts is None:
+            run_opts = {}
         assert isinstance(run_opts, dict)
-        assert "sample_count" in run_opts
+        if "sample_count" in run_opts:
+            assert run_opts["sample_count"] == sample_count
+        else:
+            run_opts["sample_count"] = sample_count
         assert isinstance(run_folder, Path)
 
         super().__init__()

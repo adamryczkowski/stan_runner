@@ -95,6 +95,9 @@ class StanOutputScope(Enum):
         else:
             raise ValueError(f"Unknown StanOutputScope: {self}")
 
+    def __gt__(self, other: StanOutputScope):
+        return self.value > other.value
+
 
 class IInferenceResult(ABC):
 

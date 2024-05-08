@@ -178,6 +178,11 @@ class IStanModelMeta(IPrettyPrintable, IObjectWithID):
             ans += "Model has not been compiled\n"
         return ans
 
+    @property
+    @abstractmethod
+    def exe_metadata(self)->dict[str, Any]|None:
+        ...
+
 
 class IStanModel(IObjectWithMeta, IStanModelMeta):
 
