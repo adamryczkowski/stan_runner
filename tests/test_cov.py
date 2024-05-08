@@ -1,13 +1,12 @@
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
-from src.stan_runner import CmdStanRunner
-
-from scipy.stats import random_correlation
+from stan_runner import *
 
 
-def model_generator_cov(nrow: int = 1000) -> tuple[str, dict[str, np.ndarray]]:
+def model_generator_cov(nrow: int = 1000) -> tuple[StanModel, StanData]:
     # Returns stan model that recovers multivariate normal variable with par_count size from
     # gets input data of dimension data_dim from nrow samples, and returns model string and the data dictionary.
 
@@ -28,6 +27,8 @@ model {
    rows ~ normal(mu1+mu2, sigma);
 }
 """
+    model_obj = StanModel(model_folder=Path(__file__).parent / "model_cache", model_name="cov_model",
+                          model_code=model_str)
 
     true_mu = np.random.randn(1)[0]
     # Exp(1) distributed
@@ -41,53 +42,51 @@ model {
         "true_mu": true_mu,
         "true_sigma": true_sigma
     }
+    data_obj = StanData(run_folder=Path(__file__).parent / "data_cache", data=data_dict)
 
-    return model_str, data_dict
+    return model_obj, data_obj
 
 
-def test1():
-    model_str, data_dict = model_generator_cov(nrow=10000)
-    model_cache_dir = Path(__file__).parent / "model_cache"
+def test1(output_scope: StanOutputScope):
+    model_obj, data_obj = model_generator_cov(nrow=10000)
 
-    runner = CmdStanRunner(model_cache_dir)
-    runner.load_model_by_str(model_str, "cov_model")
-    assert runner.is_model_loaded
-    runner.compile_model()
-    assert runner.is_model_compiled
-    runner.load_data_by_dict(data_dict)
-    assert runner.is_data_set
-    # runner.sampling(16000, num_chains=16)
-    print(data_dict["true_mu"])
-    print(data_dict["true_sigma"])
+    install_all_dependencies()
+    # runner = CmdStanRunner(model_cache=model_cache_dir)
+    # runner.install_dependencies()
+    try:
+        model_obj.make_sure_is_compiled()
+    except ValueError as v:
+        print(f"Compilation error: {str(v)}")
+        return
 
-    mcmc = runner.sampling(iter_sampling=4000, num_chains=8)
-    if mcmc.is_error:
-        print(mcmc.messages)
-    else:
-        print(mcmc.repr_without_sampling_errors())
-        print(mcmc.pretty_cov_matrix(["mu1", "mu2"]))
+    assert model_obj.is_compiled
 
-    vb = runner.variational_bayes(algorithm="fullrank")
-    if vb.is_error:
-        print(vb.messages)
-    else:
-        print(vb.repr_without_sampling_errors())
-        print(vb.pretty_cov_matrix(["mu1", "mu2"]))
+    print(data_obj.data_dict["true_mu"])
+    print(data_obj.data_dict["true_sigma"])
 
-    map = runner.laplace_sample()
-    if map.is_error:
-        print(map.messages)
-    else:
-        print(map.repr_without_sampling_errors())
-        print(map.pretty_cov_matrix(["mu1", "mu2"]))
+    def make_a_run(output_scope: StanOutputScope, run_engine: StanResultEngine, run_opts: dict[str, Any] = None):
+        runner = StanRun(run_folder=Path(__file__).parent.parent / "run_cache",
+                         data=data_obj, model=model_obj, output_scope=output_scope,
+                         sample_count=4000, run_engine=run_engine, run_opts=run_opts)
 
-    pf = runner.pathfinder(output_samples=4000)
-    if pf.is_error:
-        print(pf.messages)
-    else:
-        print(pf.repr_without_sampling_errors())
-        print(pf.pretty_cov_matrix(["mu1", "mu2"]))
+        result = runner.run()
+        if result.is_error:
+            print(result.errors)
+        print(result.repr_without_sampling_errors())
+        if output_scope > StanOutputScope.MainEffects:
+            assert isinstance(result, IStanResultCovariances)
+
+            print(result.pretty_cov_matrix(["mu1", "mu2"]))
+
+    make_a_run(output_scope=output_scope, run_engine=StanResultEngine.MCMC)
+    make_a_run(output_scope=output_scope, run_engine=StanResultEngine.VB, run_opts={"algorithm": "fullrank"})
+    make_a_run(output_scope=output_scope, run_engine=StanResultEngine.VB, run_opts={"algorithm": "meanfield"})
+    make_a_run(output_scope=output_scope, run_engine=StanResultEngine.LAPLACE)
+    make_a_run(output_scope=output_scope, run_engine=StanResultEngine.PATHFINDER)
 
 
 if __name__ == '__main__':
-    test1()
+    test1(output_scope=StanOutputScope.RawOutput)
+    test1(output_scope=StanOutputScope.FullSamples)
+    test1(output_scope=StanOutputScope.Covariances)
+    test1(output_scope=StanOutputScope.MainEffects)

@@ -391,7 +391,7 @@ class StanResultRawResult(ImplStanResultBase, ImplCovarianceInterface, ImplValue
     @overrides
     def get_cov_onedim_par(self, one_dim_par1: str, one_dim_par2: str) -> float | np.ndarray:
         self._get_draws()
-        return np.cov(self.draws(one_dim_par1), self.draws(one_dim_par2))
+        return np.cov(self.draws(one_dim_par1), self.draws(one_dim_par2))[0,1]
 
     @overrides
     def get_onedim_parameter_estimate(self, onedim_parameter_name: str, store_values: bool = False) -> IValueWithError:

@@ -381,7 +381,7 @@ class ImplStanResultBase(IStanResultBase):
         table.field_names = ["Parameter", "index", "value", "10%", "90%"]
         for par in self.user_parameters:
             dims = self.get_parameter_shape(par)
-            if len(dims) == 0:
+            if len(dims) == 0 or (len(dims) == 1 and dims[0] == 1):
                 par_name = par
                 par_value = self.get_onedim_parameter_estimate(par_name)
                 ci = par_value.get_CI(0.8)
