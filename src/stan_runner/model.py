@@ -118,6 +118,8 @@ class StanModel(IStanModel, IMetaObjectBase):
         self._stanc_opts = stanc_opts
         self._cpp_opts = cpp_opts
         self._compilation_time = -1.0
+        self._compiled_model = None
+
 
     @property
     @overrides
@@ -176,7 +178,7 @@ class StanModel(IStanModel, IMetaObjectBase):
     @property
     @overrides
     def is_compiled(self) -> bool:
-        return self._compilation_time >= 0.0
+        return self._compiled_model is not None
 
     @overrides
     def make_sure_is_compiled(self) -> None:

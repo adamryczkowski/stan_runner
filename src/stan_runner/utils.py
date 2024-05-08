@@ -156,7 +156,7 @@ def model2json(stan_code: str, model_name: str, data: dict, output_type: StanOut
 
 def normalize_stan_model_by_str(stan_code: str) -> tuple[Optional[str], dict[str, str]]:
     # Write the model to a disposable temporary location
-    with tempfile.NamedTemporaryFile("w", delete=True, delete_on_close=True) as f:
+    with tempfile.NamedTemporaryFile("w", delete=True) as f:
         f.write(stan_code)
         f.flush()
         model_filename = Path(f.name)

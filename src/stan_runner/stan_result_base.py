@@ -46,7 +46,7 @@ class ImplStanResultMetaWithUser2Onedim(IStanResultMeta):
 
     @overrides
     def get_parameter_shape(self, user_parameter_name: str) -> tuple[int, ...]:
-        return self._get_user2dim()[user_parameter_name]
+        return self._get_user2dim()[user_parameter_name][:-1]
 
 
 
@@ -55,15 +55,18 @@ class StanResultMeta(ImplStanResultMetaWithUser2Onedim, IStanResultMeta):
     _errors: str
     _run: IStanRunMeta
     _method_name: str
+    _algorithm:str
     _user2onedim: dict[str, list[str]] | None  # Translates user parameter names to one-dim parameter names
     _user2dim: dict[str, tuple[int, ...]] | None  # Translates user parameter names to shapes
 
+
     def __init__(self, run: IStanRunMeta, runtime: float, errors: str, method_name: str,
-                 onedim_names: list[str] | set[str], sample_count: int):
+                 onedim_names: list[str] | set[str], sample_count: int, algorithm:str):
         assert isinstance(run, IStanRunMeta)
         assert isinstance(runtime, float)
         assert isinstance(errors, str)
         assert isinstance(method_name, str)
+        assert isinstance(algorithm, str)
         assert onedim_names is not None
         if isinstance(onedim_names, list):
             assert len(onedim_names) == len(set(onedim_names))
@@ -75,6 +78,7 @@ class StanResultMeta(ImplStanResultMetaWithUser2Onedim, IStanResultMeta):
         self._runtime = runtime
         self._errors = errors
         self._method_name = method_name
+        self._algorithm = algorithm
 
     @overrides
     def _get_user2onedim(self) -> dict[str, list[str]]:
@@ -191,6 +195,11 @@ Run:
     def method_name(self) -> str:
         return self._method_name
 
+    @property
+    @overrides
+    def requested_algorithm_variation(self) -> str:
+        return self._algorithm
+
 
 class ImplStanResultBase(IStanResultBase):
     _run: IStanRun
@@ -264,7 +273,7 @@ class ImplStanResultBase(IStanResultBase):
 
     @overrides
     def get_metaobject(self) -> IStanResultMeta:
-        return StanResultMeta(self.get_run_meta().get_object().get_metaobject(), self._runtime, self._errors, "run")
+        return StanResultMeta(self.get_run_meta(), self._runtime, self._errors, "run")
 
     @abstractmethod
     @overrides
@@ -401,9 +410,9 @@ class ImplStanResultBase(IStanResultBase):
         elif self.result_type == StanResultEngine.PATHFINDER:
             return "Pathfinder variational inference algorithm."
         elif self.result_type == StanResultEngine.VB:
-            return f"Variational inference algorithm {self._run.run_opts['algorithm']}"
+            return f"Variational inference algorithm {self.requested_algorithm_variation}"
         elif self.result_type == StanResultEngine.MCMC:
-            return f"MCMC algorithm {self._run.run_opts['algorithm']}, engine {self._run.run_opts['engine']}"
+            return f"MCMC algorithm {self.requested_algorithm_variation}, engine {self._run.run_engine.txt_value()}"
 
     @overrides
     def formatted_runtime(self) -> str:
@@ -440,6 +449,7 @@ class ImplCovarianceInterface(IStanResultCovariances):
         cov_matrix = np.asarray([self.get_cov_onedim_par(name1, name2) for name1 in one_dim_names for name2 in one_dim_names])
 
         return cov_matrix, one_dim_names
+
 
     @overrides
     def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:

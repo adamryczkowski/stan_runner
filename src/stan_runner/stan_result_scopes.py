@@ -22,24 +22,28 @@ from .utils import infer_param_shapes
 
 
 class StanResultMainEffects(ImplStanResultBase, ImplStanResultMetaWithUser2Onedim, ImplValueWithError, IStanResultBase):
-    _one_dim_pars: dict[str, ValueWithError]
+    _one_dim_pars: dict[str, IValueWithError]
+    _algorithm:str
 
     _user2dim: dict[str, tuple[int, ...]]  # Caches the shape of the parameters including the sample count
     _user2onedim: dict[str, list[str]]  # Caches the one-dim parameter names
 
     def __init__(self, run: IStanRun, output: str, warnings: str, errors: str, runtime: float,
-                 one_dim_pars: dict[str, ValueWithError]):
+                 one_dim_pars: dict[str, IValueWithError], algorithm:str):
         super().__init__(run=run, output=output, warnings=warnings, errors=errors, runtime=runtime)
 
+        assert isinstance(algorithm, str)
         assert isinstance(one_dim_pars, dict)
         for k, v in one_dim_pars.items():
             assert isinstance(k, str)
             assert isinstance(v, ValueWithError)
         self._user2dim, self._user2onedim = infer_param_shapes(list(one_dim_pars.keys()))
         for k in self._user2onedim.keys():
-            self._user2dim[k] = self._user2dim[k] + (one_dim_pars[k].N,)
+            avg_sample_size = np.average([one_dim_pars[ok].N for ok in self._user2onedim[k]])
+            self._user2dim[k] = self._user2dim[k] + (avg_sample_size,)
 
         self._one_dim_pars = one_dim_pars
+        self._algorithm = algorithm
 
     @overrides
     def _get_user2onedim(self) -> dict[str, list[str]]:
@@ -64,6 +68,11 @@ class StanResultMainEffects(ImplStanResultBase, ImplStanResultMetaWithUser2Onedi
             raise ValueError(f"Parameter {onedim_parameter_name} not found in the result")
 
         return self._one_dim_pars[onedim_parameter_name]
+
+    @property
+    @overrides
+    def requested_algorithm_variation(self) -> str:
+        return self._algorithm
 
 
 class StanResultCovariances(ImplStanResultMetaWithUser2Onedim, ImplStanResultBase, ImplCovarianceInterface,
@@ -142,6 +151,12 @@ class StanResultCovariances(ImplStanResultMetaWithUser2Onedim, ImplStanResultBas
                               SE=np.sqrt(self._covariances[idx, idx]),
                               N=self.sample_count(onedim_parameter_name))
 
+    @overrides
+    def downcast_to_main_effects(self) -> IStanResultBase:
+        return StanResultMainEffects(run=self._run, output=self.messages, warnings=self.warnings, errors= self.errors,
+                                     runtime=self._runtime, one_dim_pars=self.all_main_effects_onedim_par())
+
+
 
 class StanResultFullSamples(ImplStanResultMetaWithUser2Onedim, ImplStanResultBase, ImplCovarianceInterface,
                             ImplValueWithError, IStanResultFullSamples):
@@ -214,6 +229,22 @@ class StanResultFullSamples(ImplStanResultMetaWithUser2Onedim, ImplStanResultBas
             return ValueWithError.CreateFromVector(self._one_dim_pars[onedim_parameter_name].vector,
                                                    N=self._one_dim_pars[onedim_parameter_name].N)
 
+    @overrides
+    def downcast_to_main_effects(self) -> IStanResultBase:
+        return StanResultMainEffects(run=self._run, output=self.messages, warnings=self.warnings, errors= self.errors,
+                                     runtime=self._runtime, one_dim_pars=self.all_main_effects_onedim_par())
+
+    @overrides
+    def downcast_to_covariances(self) -> IStanResultCovariances:
+        main_effects = np.array([self.draws(onedim_name).mean() for onedim_name in self.onedim_parameters])
+        covariances = np.array([[np.cov(self.draws(onedim_name1), self.draws(onedim_name2))[0, 1]
+                                 for onedim_name2 in self.onedim_parameters]
+                                for onedim_name1 in self.onedim_parameters])
+        return StanResultCovariances(run=self._run, output=self.messages, warnings=self.warnings, errors=self.errors,
+                                     runtime=self._runtime, main_effects=main_effects, covariances=covariances,
+                                     effective_sample_sizes=np.array([self.sample_count(one_dim_name)
+                                                                     for one_dim_name in self.onedim_parameters]),
+                                     onedim_names=self.onedim_parameters)
 
 class StanResultRawResult(ImplStanResultBase, ImplCovarianceInterface, ImplValueWithError,
                           ImplStanResultMetaWithUser2Onedim, IStanResultRawResult):
@@ -320,8 +351,8 @@ class StanResultRawResult(ImplStanResultBase, ImplCovarianceInterface, ImplValue
             assert False
 
         self._draws_offset = offset
-        self._names_dict = {name: idx for idx, name in enumerate(self._draws_names)}
         self._draws_names = self._result.column_names
+        self._names_dict = {name: idx for idx, name in enumerate(self._draws_names)}
         self._user2dim, self._user2onedim = infer_param_shapes(self._draws_names[offset:])
 
     def _get_draws(self):
@@ -382,3 +413,38 @@ class StanResultRawResult(ImplStanResultBase, ImplCovarianceInterface, ImplValue
     def _get_user2dim(self) -> dict[str, tuple[int, ...]]:
         self._get_meta()
         return self._user2dim
+
+    @overrides
+    def downcast_to_main_effects(self) -> IStanResultBase:
+        return StanResultMainEffects(run=self._run, output=self.messages, warnings=self.warnings, errors= self.errors,
+                                     runtime=self._runtime, one_dim_pars=self.all_main_effects_onedim_par(),
+                                     algorithm=self.requested_algorithm_variation)
+
+    @overrides
+    def downcast_to_covariances(self) -> IStanResultCovariances:
+        main_effects = np.array([self.draws(onedim_name).mean() for onedim_name in self.onedim_parameters])
+        covariances = np.array([[np.cov(self.draws(onedim_name1), self.draws(onedim_name2))[0, 1]
+                                 for onedim_name2 in self.onedim_parameters]
+                                for onedim_name1 in self.onedim_parameters])
+        return StanResultCovariances(run=self._run, output=self.messages, warnings=self.warnings, errors=self.errors,
+                                     runtime=self._runtime, main_effects=main_effects, covariances=covariances,
+                                     effective_sample_sizes=np.array([self.sample_count(one_dim_name)
+                                                                     for one_dim_name in self.onedim_parameters]),
+                                     onedim_names=self.onedim_parameters)
+
+    @overrides
+    def downcast_to_full_samples(self) -> IStanResultFullSamples:
+        draws, names = self.draws_of_all_variables()
+        names=list(names)
+        return StanResultFullSamples(run=self._run, output=self.messages, warnings=self.warnings, errors=self.errors,
+                                     runtime=self._runtime, draws=draws,
+                                     onedim_names=names,
+                                     effective_sample_sizes=np.array([self.sample_count(one_dim_name)
+                                                                     for one_dim_name in self.onedim_parameters]))
+
+    @property
+    @overrides
+    def requested_algorithm_variation(self) -> str:
+        if self._result is None:
+            raise ValueError("No result available")
+        return self._result.metadata.cmdstan_config["algorithm"]

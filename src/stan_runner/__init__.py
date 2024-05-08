@@ -17,6 +17,7 @@ from .model import StanModel, StanModelMeta
 from .stan_result_scopes import StanResultMainEffects, StanResultCovariances, StanResultFullSamples, StanResultRawResult
 from .stan_result_base import StanResultMeta
 from .runner import StanRun, StanRunMeta
+from .pystan_run import install_all_dependencies
 # from .nats_utils import *
 # from .nats_message_broker import MessageBroker
 # from .nats_worker import NatsWorker

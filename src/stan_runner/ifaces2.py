@@ -262,13 +262,14 @@ Return scope: {self.output_scope.txt_value()}
         return ans
 
 
+
 class IResultPromise(ABC):
     pass
 
 
 class IStanRun(ISerializableObject, IObjectWithMeta, IStanRunMeta):
     @abstractmethod
-    def run(self) -> IResultPromise:
+    def run(self) -> IStanResultBase:
         ...
 
     @property
@@ -370,6 +371,12 @@ class IStanResultMeta(IMetaObjectBase, IPrettyPrintable, IObjectWithID):
         ...
 
 
+    @property
+    @abstractmethod
+    def requested_algorithm_variation(self)->str:
+        ...
+
+
 class ImplementationOfUser2OneDim(ABC):
     @abstractmethod
     def _get_user2onedim(self) -> dict[str, list[str]]:
@@ -454,10 +461,18 @@ class IStanResultCovariances(IStanResultBase):
     def pretty_cov_matrix(self, user_parameter_names: list[str] | str | None = None) -> str:
         ...
 
+    @abstractmethod
+    def downcast_to_main_effects(self) -> IStanResultBase:
+        ...
+
 
 class IStanResultFullSamples(IStanResultCovariances):
     @abstractmethod
     def draws(self, onedim_varname:str) -> np.ndarray:
+        ...
+
+    @abstractmethod
+    def downcast_to_covariances(self) -> IStanResultCovariances:
         ...
 
 
@@ -473,4 +488,8 @@ class IStanResultRawResult(IStanResultFullSamples):
 
     @abstractmethod
     def serialize_to_file(self) -> Path:
+        ...
+
+    @abstractmethod
+    def downcast_to_full_samples(self) -> IStanResultFullSamples:
         ...

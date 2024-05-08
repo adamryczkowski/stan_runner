@@ -87,6 +87,7 @@ class StanData(IStanData, IMetaObjectBase):
             if isinstance(data_item, np.ndarray):
                 if data_item.dtype not in [np.float32, np.float64, np.int32, np.int64]:
                     raise ValueError(f"Data {key} type {data_item.dtype} not supported")
+                new_data[key] = data_item
             elif isinstance(data_item, (float, int)):
                 new_data[key] = data_item
             else:

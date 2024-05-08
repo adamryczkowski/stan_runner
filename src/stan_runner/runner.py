@@ -9,7 +9,7 @@ from overrides import overrides
 
 from .ifaces import StanResultEngine, StanOutputScope
 from .ifaces2 import IStanRunMeta, IStanRun, IMetaObjectBase, MetaObjectBase, IStanModelMeta, IStanDataMeta, IStanData, \
-    IStanModel, IResultPromise
+    IStanModel, IStanResultBase, IStanResultRawResult
 from .pystan_run import run
 
 
@@ -166,7 +166,7 @@ class StanRun(IStanRun, IMetaObjectBase):
         return calc_hash(self.__getstate__())
 
     @overrides
-    def run(self) -> IResultPromise:
+    def run(self) -> IStanResultBase:
         return run(self)
 
     @property

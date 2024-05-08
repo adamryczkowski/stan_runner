@@ -1,14 +1,14 @@
+from stan_runner import *
 from pathlib import Path
 
 import numpy as np
 
-from src.stan_runner import CmdStanRunner
 import cmdstanpy
 
 
 def model_generator_array(total_dim: list[int],
                           matrix_dim_count: int = 0,
-                          incl_transformed_params: bool = False) -> tuple[str, dict[str, np.ndarray]]:
+                          incl_transformed_params: bool = False) -> tuple[StanModel, StanData]:
     # Returns stan model that gets input data of dimension data_dim, and returns something
     # of the same dimension.
 
@@ -88,6 +88,11 @@ def model_generator_array(total_dim: list[int],
     model_code.append("")
     model_str = "\n".join(model_code)
 
+    model_name = f"test_dims_{'-'.join([str(x) for x in total_dim])}_matrix_{matrix_dim_count}"
+
+    model_obj = StanModel(model_folder=Path(__file__).parent.parent / "model_cache",
+                          model_name=model_name, model_code=model_str)
+
     arr = np.random.randn(*total_dim)
     if total_dim == [1]:
         data_dict = {"dims": 1, "arr": arr.tolist()[0]}
@@ -96,44 +101,31 @@ def model_generator_array(total_dim: list[int],
                      "dims": np.array(total_dim, dtype=int),
                      "arr": arr}
 
-    return model_str, data_dict
+    data_obj = StanData(run_folder=Path(__file__).parent.parent / "data_cache", data=data_dict)
+
+    return model_obj, data_obj
 
 
-# def test_model_cmdstanpy(model_code: str, data: dict[str, str]):
-#     model_file = cmdstanpy
-#     model_cache_dir = Path(__file__).parent / "model_cache"
-#
-#     runner = CmdStanRunner(model_cache=model_cache_dir)
-#
-#     runner.install_dependencies()
-#
-#     runner
-#
-#
-#     stan_file="/home/Adama-docs/Adam/MyDocs/praca/TrainerEngine/lib/stan_runner/tests/model_cache/cov_model.stan", cpp_options={'STAN_THREADS':'true'})
-
-def test_model(model_code: str, data: dict[str, str]):
+def test_model(model_obj: StanModel, data_obj: StanData, output_scope: StanOutputScope = StanOutputScope.MainEffects,
+               run_engine: StanResultEngine = StanResultEngine.MCMC):
     # model_cache_dir should be an absolute string of the model_cache directory in the project's folder.
-    model_cache_dir = Path(__file__).parent.parent / "model_cache"
-
-    runner = CmdStanRunner(model_cache=model_cache_dir)
-    runner.install_dependencies()
-
-    runner.load_model_by_str(model_code, "test_model")
-    if not runner.is_model_loaded:
-        print(runner.model_code)
-        print(runner.messages["stanc_error"])
-
+    # model_cache_dir = Path(__file__).parent.parent / "model_cache"
+    install_all_dependencies()
+    # runner = CmdStanRunner(model_cache=model_cache_dir)
+    # runner.install_dependencies()
+    try:
+        model_obj.make_sure_is_compiled()
+    except ValueError as v:
+        print(f"Compilation error: {str(v)}")
         return
-    runner.compile_model()
-    if not runner.is_model_compiled:
-        print(runner.messages["compile_error"])
-        return
-    runner.load_data_by_dict(data)
-    if not runner.is_data_set:
-        print(runner.messages["data_error"])
-        return
-    result = runner.sampling(iter_sampling=1000, num_chains=8)
+
+    assert model_obj.is_compiled
+
+    runner = StanRun(run_folder=Path(__file__).parent.parent / "run_cache",
+                     data=data_obj, model=model_obj, output_scope=output_scope,
+                     run_engine=run_engine, run_opts={"sample_count": 4000})
+
+    result = runner.run()
     # print(messages)
     print(result)
 
