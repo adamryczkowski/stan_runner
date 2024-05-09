@@ -1,3 +1,4 @@
+import numpy as np
 import io
 import subprocess
 import time
@@ -13,6 +14,27 @@ import copy
 from .ifaces import StanResultEngine, StanOutputScope
 from .ifaces2 import IStanRun, IStanModel, IStanData, IStanResultBase
 from .stan_result_scopes import StanResultRawResult
+from abc import ABC, abstractmethod
+from overrides import overrides
+
+class IStanBackend(ABC):
+    @abstractmethod
+    def install_all_dependencies(self):
+        pass
+
+    @abstractmethod
+    def make_model(self, model_name: str, model_code: str, stanc_opts: dict[str, Any] = None,
+                 cpp_opts: dict[str, Any] = None) -> IStanModel:
+        pass
+
+    @abstractmethod
+    def make_data(self, data: dict[str, float | int | np.ndarray], data_opts: dict[str, str] = None) -> IStanData:
+        pass
+
+    @abstractmethod
+    def make_run(self, data: IStanData, model: IStanModel, output_scope: StanOutputScope,
+                 run_engine: StanResultEngine, sample_count:int, run_opts: dict[str, Any]=None) -> IStanRun:
+        pass
 
 
 # from .result_adapter import InferenceResult
@@ -114,7 +136,6 @@ def run(obj: IStanRun) -> IStanResultBase:
             run_opts["chains"] = parallel_chains
         run_opts["iter_sampling"] = obj.run_opts["sample_count"] // parallel_chains
         del run_opts["sample_count"]
-
 
         engine = pystan_model.sample
     else:

@@ -1,14 +1,13 @@
-from stan_runner import *
 from pathlib import Path
 
 import numpy as np
 
-import cmdstanpy
+from stan_runner import *
 
 
-def model_generator_array(total_dim: list[int],
+def model_generator_array(main: StanBackend, total_dim: list[int],
                           matrix_dim_count: int = 0,
-                          incl_transformed_params: bool = False) -> tuple[StanModel, StanData]:
+                          incl_transformed_params: bool = False) -> tuple[IStanModel, IStanData]:
     # Returns stan model that gets input data of dimension data_dim, and returns something
     # of the same dimension.
 
@@ -90,8 +89,7 @@ def model_generator_array(total_dim: list[int],
 
     model_name = f"test_dims_{'-'.join([str(x) for x in total_dim])}_matrix_{matrix_dim_count}"
 
-    model_obj = StanModel(model_folder=Path(__file__).parent.parent / "model_cache",
-                          model_name=model_name, model_code=model_str)
+    model_obj = main.make_model(model_name=model_name, model_code=model_str)
 
     arr = np.random.randn(*total_dim)
     if total_dim == [1]:
@@ -101,7 +99,7 @@ def model_generator_array(total_dim: list[int],
                      "dims": np.array(total_dim, dtype=int),
                      "arr": arr}
 
-    data_obj = StanData(run_folder=Path(__file__).parent.parent / "data_cache", data=data_dict)
+    data_obj = main.make_data(data=data_dict)
 
     return model_obj, data_obj
 
@@ -130,38 +128,39 @@ def test_model(model_obj: StanModel, data_obj: StanData, output_scope: StanOutpu
     print(result)
 
 
-def test1():
-    test_model(*model_generator_array([1], 1, True))
+def test1(main: StanBackend):
+    test_model(*model_generator_array(main, [1], 1, True))
 
 
-def test2():
-    test_model(*model_generator_array([2], 1, True))
+def test2(main: StanBackend):
+    test_model(*model_generator_array(main, [2], 1, True))
 
 
-def test3():
-    test_model(*model_generator_array([2, 3], 2, True))
+def test3(main: StanBackend):
+    test_model(*model_generator_array(main, [2, 3], 2, True))
 
 
-def test4():
-    test_model(*model_generator_array([2, 3, 4], 2, True))
+def test4(main: StanBackend):
+    test_model(*model_generator_array(main, [2, 3, 4], 2, True))
 
 
-def test4():
-    test_model(*model_generator_array([2, 3, 4, 2], 2, True))
+def test4(main: StanBackend):
+    test_model(*model_generator_array(main, [2, 3, 4, 2], 2, True))
 
 
-def test5():
-    test_model(*model_generator_array([2, 3, 4], 1, True))
+def test5(main: StanBackend):
+    test_model(*model_generator_array(main, [2, 3, 4], 1, True))
 
 
-def test6():
-    test_model(*model_generator_array([2, 3, 4], 0, True))
+def test6(main: StanBackend):
+    test_model(*model_generator_array(main, [2, 3, 4], 0, True))
 
 
 if __name__ == '__main__':
-    test1()
-    test2()
-    test3()
-    test4()
-    test5()
-    test6()
+    main = StanBackend()
+    test1(main)
+    test2(main)
+    test3(main)
+    test4(main)
+    test5(main)
+    test6(main)

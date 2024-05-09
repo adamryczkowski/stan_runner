@@ -1,9 +1,9 @@
 from pathlib import Path
-from stan_runner import *
 
 import numpy as np
-
 from scipy.stats import random_correlation
+
+from stan_runner import *
 
 
 def random_corr_matrix(n: int) -> np.ndarray:
@@ -25,7 +25,7 @@ def random_cov_matrix(n: int, mu: float) -> np.ndarray:
     return np.diag(stdev) @ corr @ np.diag(stdev)
 
 
-def model_generator_cov(par_count: int = 2, nrow: int = 100) -> tuple[StanModel, StanData]:
+def model_generator_cov(main: StanBackend, par_count: int = 2, nrow: int = 100) -> tuple[IStanModel, IStanData]:
     # Returns stan model that recovers multivariate normal variable with par_count size from
     # gets input data of dimension data_dim from nrow samples, and returns model string and the data dictionary.
 
@@ -48,8 +48,7 @@ def model_generator_cov(par_count: int = 2, nrow: int = 100) -> tuple[StanModel,
     model_str = "\n".join(model_code)
 
     model_name = f"test_cov_{str(par_count)}-{str(nrow)}"
-    model_obj = StanModel(model_folder=Path(__file__).parent.parent / "model_cache",
-                          model_name=model_name, model_code=model_str)
+    model_obj = main.make_model(model_name=model_name, model_code=model_str)
 
     true_mu = np.random.randn(par_count)
     true_sigma = random_cov_matrix(par_count, 1)
@@ -64,17 +63,18 @@ def model_generator_cov(par_count: int = 2, nrow: int = 100) -> tuple[StanModel,
         "true_sigma": true_sigma
     }
 
-    data_obj = StanData(run_folder=Path(__file__).parent.parent / "data_cache", data=data_dict)
+    data_obj = main.make_data(data=data_dict)
 
     return model_obj, data_obj
 
 
-def test1(output_scope: StanOutputScope, single_engine:StanResultEngine = None):
+def test1(output_scope: StanOutputScope, single_engine: StanResultEngine = None):
     model_obj, data_obj = model_generator_cov(par_count=2, nrow=1000)
     # model_cache_dir = Path(__file__).parent / "model_cache"
 
     if single_engine is None:
-        single_engine = {StanResultEngine.MCMC, StanResultEngine.PATHFINDER, StanResultEngine.LAPLACE, StanResultEngine.VB}
+        single_engine = {StanResultEngine.MCMC, StanResultEngine.PATHFINDER, StanResultEngine.LAPLACE,
+                         StanResultEngine.VB}
     elif isinstance(single_engine, StanResultEngine):
         single_engine = {single_engine}
 

@@ -5,7 +5,6 @@ from typing import Any
 
 class CachedCmdStanRunner(CmdStanRunner):
 
-    def
     @overrides
     def sampling(self, num_chains: int, iter_sampling: int = None,
                  iter_warmup: int = None, thin: int = 1, max_treedepth: int = None,

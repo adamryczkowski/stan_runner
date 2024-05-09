@@ -6,7 +6,7 @@ import numpy as np
 from stan_runner import *
 
 
-def model_generator_cov(nrow: int = 1000) -> tuple[StanModel, StanData]:
+def model_generator_cov(main: StanBackend, nrow: int = 1000) -> tuple[IStanModel, IStanData]:
     # Returns stan model that recovers multivariate normal variable with par_count size from
     # gets input data of dimension data_dim from nrow samples, and returns model string and the data dictionary.
 
@@ -27,8 +27,8 @@ model {
    rows ~ normal(mu1+mu2, sigma);
 }
 """
-    model_obj = StanModel(model_folder=Path(__file__).parent / "model_cache", model_name="cov_model",
-                          model_code=model_str)
+    model_obj = main.make_model(model_name="cov_model",
+                                model_code=model_str)
 
     true_mu = np.random.randn(1)[0]
     # Exp(1) distributed
@@ -42,13 +42,14 @@ model {
         "true_mu": true_mu,
         "true_sigma": true_sigma
     }
-    data_obj = StanData(run_folder=Path(__file__).parent / "data_cache", data=data_dict)
+    data_obj = main.make_data(data=data_dict)
 
     return model_obj, data_obj
 
 
 def test1(output_scope: StanOutputScope):
-    model_obj, data_obj = model_generator_cov(nrow=10000)
+    main = StanBackend()
+    model_obj, data_obj = model_generator_cov(main, nrow=10000)
 
     install_all_dependencies()
     # runner = CmdStanRunner(model_cache=model_cache_dir)

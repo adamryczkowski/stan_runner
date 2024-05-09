@@ -19,6 +19,7 @@ from .stan_result_base import StanResultMeta
 from .runner import StanRun, StanRunMeta
 from .pystan_run import install_all_dependencies
 from .ifaces2 import IStanResultBase, IStanResultRawResult, IStanResultCovariances, IStanResultFullSamples, IStanRun, IStanModel, IStanData, IStanResultMeta, IStanRunMeta, IStanModelMeta, IStanDataMeta
+from .main import StanBackend
 # from .nats_utils import *
 # from .nats_message_broker import MessageBroker
 # from .nats_worker import NatsWorker
